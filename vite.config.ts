@@ -17,8 +17,9 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        // Keep heavy native-ish deps external — npm resolves them at install time
+        // Keep deps with Node.js built-in requirements external
         "jsdom",
+        "commander",
       ],
       output: {
         banner: "#!/usr/bin/env node",
