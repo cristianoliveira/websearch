@@ -56,11 +56,6 @@ interface ExtractResult {
   content: string;
 }
 
-interface AnswerResult {
-  answer: string;
-  citations: { title: string; url: string }[];
-}
-
 // === Configuration ===
 
 const PROVIDERS: Record<string, ProviderConfig> = {
@@ -85,9 +80,6 @@ const SUBCOMMANDS: Record<string, SubcommandConfig> = {
     default: "brave",
   },
   extract: { providers: [], default: null },
-  answer: { providers: ["tavily", "exa", "websearchapi"], default: "tavily" },
-  similar: { providers: ["exa"], default: "exa" },
-  code: { providers: ["exa"], default: "exa" },
 };
 
 // === Argument Parsing ===
@@ -194,9 +186,6 @@ function printHelp(): void {
 Commands:
   search    Search the web
   extract   Extract content from a URL as markdown
-  answer    Get a direct answer with citations
-  similar   Find pages similar to a URL (Exa)
-  code      Find code examples and context (Exa)
 
 Options:
   --provider, -p <name>   Provider to use (default varies by command)
@@ -245,32 +234,6 @@ Examples:
   websearch extract "https://docs.rust-lang.org/book/ch04-01-what-is-ownership.html"
   websearch extract "https://example.com/article"`,
 
-    answer: `Usage: websearch answer <query> [options]
-
-Get a direct answer with source citations.
-
-  --provider, -p   ${sub.providers.join(", ")} (default: ${sub.default})
-
-Examples:
-  websearch answer "What is the latest version of Node.js?"
-  websearch answer "Who won the 2024 World Series?" -p exa`,
-
-    similar: `Usage: websearch similar <url> [options]
-
-Find pages similar to the given URL (Exa only).
-
-  -n <num>   Number of results (default: 5)
-
-Examples:
-  websearch similar "https://blog.example.com/great-article"`,
-
-    code: `Usage: websearch code <query>
-
-Find code examples from GitHub, Stack Overflow, and docs (Exa only).
-
-Examples:
-  websearch code "React hooks state management"
-  websearch code "Express.js middleware authentication"`,
   };
 
   console.log(helps[cmd]);
@@ -589,88 +552,6 @@ async function searchSerpAPI(query: string, opts: Options): Promise<SearchResult
   return results;
 }
 
-// === Answer Providers ===
-
-async function answerTavily(query: string): Promise<AnswerResult> {
-  const key = getKey("tavily");
-  const data: APIResponse = await fetchJSON("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ query, include_answer: "advanced", max_results: 5 }),
-  });
-  return {
-    answer: data.answer || "(No answer generated)",
-    citations: (data.results || []).map((r: APIResponse) => ({
-      title: r.title || "",
-      url: r.url || "",
-    })),
-  };
-}
-
-async function answerExa(query: string): Promise<AnswerResult> {
-  const key = getKey("exa");
-  const data: APIResponse = await fetchJSON("https://api.exa.ai/answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({ query, text: true }),
-  });
-  return {
-    answer: data.answer || "(No answer generated)",
-    citations: (data.citations || []).map((r: APIResponse) => ({
-      title: r.title || "",
-      url: r.url || "",
-    })),
-  };
-}
-
-async function answerWebSearchAPI(query: string): Promise<AnswerResult> {
-  const key = getKey("websearchapi");
-  const data: APIResponse = await fetchJSON("https://api.websearchapi.ai/ai-search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ query, includeAnswer: true, maxResults: 5 }),
-  });
-  return {
-    answer: data.answer || "(No answer generated)",
-    citations: (data.organic || []).map((r: APIResponse) => ({
-      title: r.title || "",
-      url: r.url || "",
-    })),
-  };
-}
-
-// === Similar (Exa) ===
-
-async function similarExa(url: string, opts: Options): Promise<SearchResult[]> {
-  const key = getKey("exa");
-  const data: APIResponse = await fetchJSON("https://api.exa.ai/findSimilar", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({
-      url,
-      numResults: opts.numResults,
-      contents: { highlights: { maxCharacters: 300 } },
-    }),
-  });
-  return (data.results || []).map((r: APIResponse) => ({
-    title: r.title || "",
-    url: r.url || "",
-    snippet: r.highlights?.[0] || "",
-    age: r.publishedDate || null,
-  }));
-}
-
-// === Code Context (Exa) ===
-
-async function codeExa(query: string): Promise<string> {
-  const key = getKey("exa");
-  const data: APIResponse = await fetchJSON("https://api.exa.ai/context", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({ query, tokensNum: "dynamic" }),
-  });
-  return data.response || "(No results)";
-}
 
 // === Output Formatters ===
 
@@ -696,21 +577,9 @@ function printExtract(result: ExtractResult): void {
   console.log(result.content);
 }
 
-function printAnswer(result: AnswerResult): void {
-  console.log(result.answer);
-  if (result.citations.length > 0) {
-    console.log("\nSources:");
-    for (let i = 0; i < result.citations.length; i++) {
-      const c = result.citations[i];
-      console.log(`${i + 1}. ${c.title} - ${c.url}`);
-    }
-  }
-}
-
 // === Main ===
 
 type SearchFn = (query: string, opts: Options) => Promise<SearchResult[]>;
-type AnswerFn = (query: string) => Promise<AnswerResult>;
 
 const SEARCH_FNS: Record<string, SearchFn> = {
   tavily: searchTavily,
@@ -720,11 +589,6 @@ const SEARCH_FNS: Record<string, SearchFn> = {
   serpapi: searchSerpAPI,
 };
 
-const ANSWER_FNS: Record<string, AnswerFn> = {
-  tavily: answerTavily,
-  exa: answerExa,
-  websearchapi: answerWebSearchAPI,
-};
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv);
@@ -740,24 +604,6 @@ async function main(): Promise<void> {
       const result = await extractLocal(opts.query);
       if (opts.json) console.log(JSON.stringify(result, null, 2));
       else printExtract(result);
-      break;
-    }
-    case "answer": {
-      const result = await ANSWER_FNS[opts.provider](opts.query);
-      if (opts.json) console.log(JSON.stringify(result, null, 2));
-      else printAnswer(result);
-      break;
-    }
-    case "similar": {
-      const results = await similarExa(opts.query, opts);
-      if (opts.json) console.log(JSON.stringify(results, null, 2));
-      else printResults(results);
-      break;
-    }
-    case "code": {
-      const result = await codeExa(opts.query);
-      if (opts.json) console.log(JSON.stringify({ content: result }, null, 2));
-      else console.log(result);
       break;
     }
   }
