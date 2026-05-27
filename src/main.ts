@@ -233,7 +233,6 @@ Extract content from a URL as markdown (local, no API credits).
 Examples:
   websearch extract "https://docs.rust-lang.org/book/ch04-01-what-is-ownership.html"
   websearch extract "https://example.com/article"`,
-
   };
 
   console.log(helps[cmd]);
@@ -552,7 +551,6 @@ async function searchSerpAPI(query: string, opts: Options): Promise<SearchResult
   return results;
 }
 
-
 // === Output Formatters ===
 
 function printResults(results: SearchResult[]): void {
@@ -588,7 +586,6 @@ const SEARCH_FNS: Record<string, SearchFn> = {
   brave: searchBrave,
   serpapi: searchSerpAPI,
 };
-
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv);
