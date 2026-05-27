@@ -472,13 +472,6 @@ async function searchBrave(query: string, opts: Options): Promise<SearchResult[]
       content: null,
     }));
 
-  if (opts.content && results.length > 0) {
-    const contents = await Promise.all(results.map((r) => fetchLocalContent(r.url)));
-    results.forEach((r, i) => {
-      r.content = contents[i];
-    });
-  }
-
   return results;
 }
 
@@ -522,13 +515,6 @@ async function searchSerpAPI(query: string, opts: Options): Promise<SearchResult
     age: r.date || r.published_date || null,
     content: null,
   }));
-
-  if (opts.content && results.length > 0) {
-    const contents = await Promise.all(results.map((r: SearchResult) => fetchLocalContent(r.url)));
-    results.forEach((r, i) => {
-      r.content = contents[i];
-    });
-  }
 
   return results;
 }
@@ -575,6 +561,16 @@ async function main(): Promise<void> {
   switch (opts.subcommand) {
     case "search": {
       const results = await SEARCH_FNS[opts.provider](opts.query, opts);
+      if (opts.content) {
+        const fetches = results.map((r) =>
+          r.content == null
+            ? fetchLocalContent(r.url).then((c) => {
+                r.content = c;
+              })
+            : Promise.resolve(),
+        );
+        await Promise.all(fetches);
+      }
       if (opts.json) console.log(JSON.stringify(results, null, 2));
       else printResults(results);
       break;
