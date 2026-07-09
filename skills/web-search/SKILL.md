@@ -18,6 +18,7 @@ websearch search "query" -n 10                 # More results (default: 5)
 websearch search "query" --content             # Include page content
 websearch search "query" --freshness week      # Filter: day, week, month, year
 websearch search "query" --country DE          # Country-specific results
+websearch search "query" -p codex              # AI-synthesized search (Codex backend)
 websearch search "query" -p scholar            # Academic papers
 websearch search "query" -p youtube            # Video search
 websearch search "query" -p amazon --country US  # Product search
@@ -41,6 +42,8 @@ Default provider is **brave**. Override with `-p <name>`.
 | Provider | Source |
 |---|---|
 | brave | Brave independent index |
+| codex | **EXPERIMENTAL** Codex AI-synthesized text answer (alpha/search) |
+| openai | OpenAI AI-synthesized search (Responses web_search) |
 | tavily | Tavily AI search |
 | exa | Exa neural/semantic index |
 | websearchapi | Google (via WebSearchAPI.ai) |
@@ -58,6 +61,7 @@ Default provider is **brave**. Override with `-p <name>`.
 - **scholar**: Returns academic papers with citation snippets.
 - **youtube**: Returns video titles, links, and descriptions.
 - **amazon**: Returns product titles, prices, and ratings. `--country` maps to regional Amazon domains (e.g. `de` → amazon.de). Defaults to amazon.com.
+- **codex** *(EXPERIMENTAL)*: Hits the internal/alpha `alpha/search` endpoint and returns a SINGLE synthesized text answer, NOT structured result rows. There is no `url`/`title`/`snippet` per result — we map the answer text into one result (`snippet` = first 500 chars; use `--content` for the full answer). `-n` is ignored. Auth via `CODEX_ACCESS_TOKEN` (Codex/OpenAI bearer auth; `codex login` / `~/.codex/auth.json`). `--country` sets user location; `--freshness` maps to `recency` (days). Endpoint + shape are undocumented and may change. Override model with `WEBSEARCH_CODEX_MODEL` (default `gpt-5.4`).
 
 ## Setup
 
@@ -68,5 +72,6 @@ TAVILY_API_KEY      # https://app.tavily.com
 EXA_API_KEY         # https://dashboard.exa.ai
 WEBSEARCHAPI_KEY    # https://websearchapi.ai
 BRAVE_API_KEY       # https://api-dashboard.search.brave.com
+CODEX_ACCESS_TOKEN  # EXPERIMENTAL alpha/search (`codex login`, ~/.codex/auth.json)
 SERPAPI_KEY         # google, scholar, youtube, amazon (https://serpapi.com/manage-api-key)
 ```

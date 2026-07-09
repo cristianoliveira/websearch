@@ -43,6 +43,11 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     name: "Amazon (SerpAPI)",
     url: "https://serpapi.com/manage-api-key",
   },
+  codex: {
+    env: "CODEX_ACCESS_TOKEN",
+    name: "Codex Search (alpha/search, EXPERIMENTAL)",
+    url: "Run `codex login`; use access_token from ~/.codex/auth.json",
+  },
 };
 
 export const PROVIDER_NAMES = Object.keys(PROVIDERS);
@@ -209,6 +214,72 @@ async function searchBrave(query: string, opts: SearchOptions): Promise<SearchRe
   return results;
 }
 
+// === Codex (alpha/search — EXPERIMENTAL, text-only) ===
+//
+// Codex search hits an internal/alpha OpenAI endpoint that returns a SINGLE
+// synthesized text answer (`output`), NOT structured title/url/snippet rows.
+// We map that text into ONE SearchResult. `numResults` is ignored. Auth is via
+// CODEX_ACCESS_TOKEN (Codex/OpenAI bearer auth). The endpoint + response shape
+// are undocumented and may change — treat as experimental.
+// Source: openai/codex codex-rs/codex-api/src/endpoint/search.rs (path "alpha/search").
+
+const CODEX_MODEL = process.env.WEBSEARCH_CODEX_MODEL || "gpt-5.4";
+
+// Pure builder for the SearchRequest body (no random id -> deterministic/tests).
+// Exported for unit testing.
+export function buildCodexRequestBody(query: string, opts: SearchOptions): Record<string, unknown> {
+  const sq: Record<string, unknown> = { q: query };
+  if (opts.freshness) {
+    const days: Record<string, number> = { day: 1, week: 7, month: 30, year: 365 };
+    if (days[opts.freshness]) sq.recency = days[opts.freshness];
+  }
+  const settings: Record<string, unknown> = {
+    external_web_access: true,
+    search_context_size: "medium",
+  };
+  if (opts.country) {
+    settings.user_location = { type: "approximate", country: opts.country.toUpperCase() };
+  }
+  return {
+    model: CODEX_MODEL,
+    commands: { search_query: [sq] },
+    settings,
+    max_output_tokens: 2500,
+  };
+}
+
+// Pure mapper: turns the alpha/search text `output` into a single SearchResult.
+// Exported for unit testing.
+export function mapCodexResult(
+  query: string,
+  output: string | null | undefined,
+  includeContent: boolean,
+): SearchResult[] {
+  if (!output) return [];
+  return [
+    {
+      title: `Codex search: ${query}`,
+      url: "",
+      snippet: truncate(output, 500),
+      // When --content is requested, return the full answer directly so the
+      // orchestrator does not try to fetchLocalContent an empty url.
+      content: includeContent ? truncate(output, 5000) : null,
+      age: null,
+    },
+  ];
+}
+
+async function searchCodex(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+  const key = getKey("codex");
+  const body = { id: crypto.randomUUID(), ...buildCodexRequestBody(query, opts) };
+  const data: APIResponse = await fetchJSON("https://api.openai.com/v1/alpha/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify(body),
+  });
+  return mapCodexResult(query, data.output, opts.content);
+}
+
 // === SerpAPI Engine Configuration ===
 
 interface SerpAPIEngineConfig {
@@ -312,6 +383,7 @@ const SEARCH_FNS: Record<string, SearchFn> = {
   exa: searchExa,
   websearchapi: searchWebSearchAPI,
   brave: searchBrave,
+  codex: searchCodex,
   google: makeSerpAPISearch(SERPAPI_ENGINES.google),
   scholar: makeSerpAPISearch(SERPAPI_ENGINES.scholar),
   youtube: makeSerpAPISearch(SERPAPI_ENGINES.youtube),

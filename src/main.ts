@@ -46,6 +46,7 @@ Environment variables:
   WEBSEARCHAPI_KEY            WebSearchAPI.ai (https://websearchapi.ai)
   BRAVE_API_KEY               Brave Search (https://api-dashboard.search.brave.com)
   SERPAPI_KEY                 Google, Scholar, YouTube, Amazon (https://serpapi.com/manage-api-key)
+  CODEX_ACCESS_TOKEN          Codex search - EXPERIMENTAL (alpha/search, text-only)
   WEBSEARCH_DEFAULT_PROVIDER  Override default provider for search`,
   );
 
