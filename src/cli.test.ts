@@ -107,9 +107,11 @@ test("AXI no-args: contains executable, purpose, default provider, credentials",
 // Help
 // =============================================================================
 
-test("AXI --help: exit 0, empty stderr", async () => {
-  const { code, err } = await run(["--help"]);
+test("AXI --help: exit 0, human text on stdout, empty stderr", async () => {
+  const { code, out, err } = await run(["--help"]);
   assert.equal(code, 0);
+  assert.ok(out.includes("Usage:"), "help must include usage text");
+  assert.ok(out.length > 50, "help output should be substantial");
   assert.equal(err, "", "--help must have empty stderr");
 });
 

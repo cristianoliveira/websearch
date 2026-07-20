@@ -122,7 +122,7 @@ export async function runCLI(
     out(renderEnvelope(env, format));
   });
 
-  // Silence Commander's output — we handle all rendering ourselves
+  // Silence Commander's output by default — we handle rendering
   program.configureOutput({
     writeOut: () => {},
     writeErr: () => {},
@@ -140,9 +140,12 @@ export async function runCLI(
     return 0;
   }
 
-  // Check for --help — let Commander handle it
+  // Check for --help — restore Commander's output for human help
   if (userArgs.includes("--help") || userArgs.includes("-h")) {
-    // Commander prints help; we just need exit 0
+    program.configureOutput({
+      writeOut: (str: string) => out(str.replace(/\n$/, "")),
+      writeErr: (str: string) => _err(str.replace(/\n$/, "")),
+    });
     try {
       await program.parseAsync(args);
       return 0;
