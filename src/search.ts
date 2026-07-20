@@ -1,5 +1,6 @@
-import { MissingCredentialError } from "./errors.ts";
+import { MissingCredentialError, OperationalError } from "./errors.ts";
 import { fetchLocalContent } from "./extract.ts";
+import { boundedBody, fetchErrorToOpCode, redactSecrets } from "./translate.ts";
 import type { SearchResult } from "./types.ts";
 import { truncate } from "./types.ts";
 
@@ -74,11 +75,24 @@ export function getKey(provider: string): string {
 
 async function fetchJSON(url: string, options: RequestInit = {}): Promise<Record<string, unknown>> {
   if (!options.signal) options.signal = AbortSignal.timeout(30000);
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`HTTP ${response.status}: ${response.statusText}\n${text}`);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (e) {
+    const code = fetchErrorToOpCode(e as Error);
+    const message =
+      code === "PROVIDER_TIMEOUT" ? "Provider request timed out" : "Provider is unreachable";
+    throw new OperationalError(message, code, e as Error);
   }
+
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    const code = fetchErrorToOpCode(response.status);
+    const debugBody = boundedBody(redactSecrets(raw));
+    const cause = new Error(`HTTP ${response.status}: ${debugBody}`);
+    throw new OperationalError(`Provider returned error (HTTP ${response.status})`, code, cause);
+  }
+
   return response.json() as Promise<Record<string, unknown>>;
 }
 

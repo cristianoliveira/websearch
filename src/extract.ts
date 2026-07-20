@@ -2,6 +2,8 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import { OperationalError } from "./errors.ts";
+import { fetchErrorToOpCode } from "./translate.ts";
 import type { ExtractResult } from "./types.ts";
 import { truncate } from "./types.ts";
 
@@ -64,12 +66,18 @@ export async function fetchLocalContent(url: string): Promise<string> {
       signal: AbortSignal.timeout(15000),
     });
 
-    if (!response.ok) return `(HTTP ${response.status})`;
+    if (!response.ok) {
+      throw new OperationalError(
+        `Content fetch failed (HTTP ${response.status})`,
+        fetchErrorToOpCode(response.status),
+      );
+    }
 
     const html = await response.text();
     return truncate(extractFromHtml(html, url).content);
   } catch (e) {
-    return `(Error: ${(e as Error).message})`;
+    if (e instanceof OperationalError) throw e;
+    throw new OperationalError("Content fetch failed", fetchErrorToOpCode(e as Error), e as Error);
   }
 }
 
@@ -80,7 +88,10 @@ export async function extractLocal(url: string): Promise<ExtractResult> {
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    throw new OperationalError(
+      `Extraction failed (HTTP ${response.status})`,
+      fetchErrorToOpCode(response.status),
+    );
   }
 
   const html = await response.text();
