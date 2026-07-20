@@ -118,7 +118,7 @@ Examples:
         const freshness = validateFreshness(opts.freshness ?? null);
         const country = validateCountry(opts.country ?? null);
 
-        const results = await searchFn(query, {
+        const page = await searchFn(query, {
           provider: opts.provider,
           numResults,
           content: opts.content ?? false,
@@ -128,7 +128,7 @@ Examples:
 
         const snippetMax = opts.full ? Infinity : 500;
         const contentMax = opts.full ? Infinity : 5000;
-        const processed = results.map((r) => ({
+        const processed = page.results.map((r) => ({
           ...r,
           snippet: textPreview(r.snippet, snippetMax).text,
           content: r.content ? textPreview(r.content, contentMax).text : null,
@@ -139,12 +139,12 @@ Examples:
           provider: opts.provider,
           requestedCount: numResults,
           returnedCount: processed.length,
-          totalCount: null,
+          totalCount: page.totalCount,
           results: processed,
         };
 
         const hints: Hint[] = [];
-        const hasTruncated = results.some(
+        const hasTruncated = page.results.some(
           (r) => r.snippet.length > snippetMax || (r.content && r.content.length > contentMax),
         );
         if (hasTruncated && !opts.full) {

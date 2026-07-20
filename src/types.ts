@@ -6,6 +6,11 @@ export interface SearchResult {
   age?: string | null;
 }
 
+export interface SearchPage {
+  results: SearchResult[];
+  totalCount: number | null;
+}
+
 export interface ExtractResult {
   title: string | null;
   content: string;

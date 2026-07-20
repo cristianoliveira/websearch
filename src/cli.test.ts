@@ -10,7 +10,7 @@ import type { ExtractResult, SearchResult } from "./types.ts";
 function mockSearch(results: SearchResult[] | Error): CLIDependencies["search"] {
   return (_query, _opts) => {
     if (results instanceof Error) throw results;
-    return Promise.resolve(results);
+    return Promise.resolve({ results, totalCount: null });
   };
 }
 
@@ -171,7 +171,7 @@ test("AXI invalid -n: exit 2, error before provider call", async () => {
   const { code, out } = await run(["search", "-n", "nope", "q"], {
     search: ((_q, _o) => {
       searchCalled = true;
-      return Promise.resolve([]);
+      return Promise.resolve({ results: [], totalCount: null });
     }) as CLIDependencies["search"],
   });
   assert.equal(searchCalled, false, "search must NOT be called after validation fails");
@@ -186,7 +186,7 @@ test("AXI invalid freshness: exit 2, valid values named", async () => {
   const { code, out } = await run(["search", "--freshness", "century", "q"], {
     search: ((_q, _o) => {
       searchCalled = true;
-      return Promise.resolve([]);
+      return Promise.resolve({ results: [], totalCount: null });
     }) as CLIDependencies["search"],
   });
   assert.equal(searchCalled, false);
@@ -229,7 +229,19 @@ test("AXI empty search: exit 0, structured output with query/provider/zero count
   assert.equal(data.ok, true);
   assert.equal(data.command, "search");
   assert.equal(data.data.returnedCount, 0);
+  assert.equal(data.data.totalCount, null);
   assert.equal(err, "", "empty search must have empty stderr");
+});
+
+test("AXI search: totalCount reported when available", async () => {
+  const { out } = await run(["search", "q"], {
+    search: mockSearch([
+      { title: "T", url: "https://a.com", snippet: "desc", content: null, age: null },
+    ]),
+  });
+  const data = JSON.parse(out);
+  assert.equal(data.data.returnedCount, 1);
+  assert.equal(data.data.totalCount, null, "mock returns null; real providers may report totals");
 });
 
 // =============================================================================

@@ -12,37 +12,39 @@ const baseOpts: SearchOptions = {
   country: null,
 };
 
-// === mapCodexResult: text `output` -> single SearchResult ===
+// === mapCodexResult: text `output` -> SearchPage ===
 
 test("mapCodexResult returns one result with Codex title prefix and empty url", () => {
-  const [r] = mapCodexResult("rust async", "Rust async is based on futures.", false);
+  const page = mapCodexResult("rust async", "Rust async is based on futures.", false);
+  const r = page.results[0];
   assert.equal(r.title, "Codex search: rust async");
   assert.equal(r.url, "");
   assert.ok(r.snippet.includes("futures"));
   assert.equal(r.age, null);
+  assert.equal(page.totalCount, null);
 });
 
 test("mapCodexResult snippet is truncated to ~500 (truncate appends '...')", () => {
-  const [r] = mapCodexResult("q", "x".repeat(1000), false);
+  const r = mapCodexResult("q", "x".repeat(1000), false).results[0];
   assert.ok(r.snippet.length <= 503, `snippet was ${r.snippet.length}`);
   assert.ok(r.snippet.length < 1000);
 });
 
 test("mapCodexResult content is null unless includeContent", () => {
-  assert.equal(mapCodexResult("q", "text", false)[0].content, null);
-  assert.equal(mapCodexResult("q", "text", true)[0].content, "text");
+  assert.equal(mapCodexResult("q", "text", false).results[0].content, null);
+  assert.equal(mapCodexResult("q", "text", true).results[0].content, "text");
 });
 
 test("mapCodexResult content is truncated to ~5000 (truncate appends '...')", () => {
-  const [r] = mapCodexResult("q", "y".repeat(10000), true);
+  const r = mapCodexResult("q", "y".repeat(10000), true).results[0];
   assert.ok((r.content ?? "").length <= 5003, `content was ${(r.content ?? "").length}`);
   assert.ok((r.content ?? "").length < 10000);
 });
 
-test("mapCodexResult empty output returns no results", () => {
-  assert.deepEqual(mapCodexResult("q", "", false), []);
-  assert.deepEqual(mapCodexResult("q", null, false), []);
-  assert.deepEqual(mapCodexResult("q", undefined, false), []);
+test("mapCodexResult empty output returns empty page", () => {
+  assert.deepEqual(mapCodexResult("q", "", false), { results: [], totalCount: null });
+  assert.deepEqual(mapCodexResult("q", null, false), { results: [], totalCount: null });
+  assert.deepEqual(mapCodexResult("q", undefined, false), { results: [], totalCount: null });
 });
 
 // === buildCodexRequestBody: SearchRequest body ===

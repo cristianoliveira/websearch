@@ -1,7 +1,7 @@
 import { MissingCredentialError, OperationalError } from "./errors.ts";
 import { fetchLocalContent } from "./extract.ts";
 import { boundedBody, fetchErrorToOpCode, redactSecrets } from "./translate.ts";
-import type { SearchResult } from "./types.ts";
+import type { SearchPage, SearchResult } from "./types.ts";
 import { truncate } from "./types.ts";
 
 // === Provider Configuration ===
@@ -114,7 +114,7 @@ function countryName(code: string): string {
 // biome-ignore lint/suspicious/noExplicitAny: provider API responses are untyped
 type APIResponse = any;
 
-async function searchTavily(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+async function searchTavily(query: string, opts: SearchOptions): Promise<SearchPage> {
   const key = getKey("tavily");
   const body: Record<string, unknown> = {
     query,
@@ -131,15 +131,18 @@ async function searchTavily(query: string, opts: SearchOptions): Promise<SearchR
     body: JSON.stringify(body),
   });
 
-  return (data.results || []).map((r: APIResponse) => ({
-    title: r.title || "",
-    url: r.url || "",
-    snippet: r.content || "",
-    content: opts.content ? truncate(r.raw_content) : null,
-  }));
+  return {
+    results: (data.results || []).map((r: APIResponse) => ({
+      title: r.title || "",
+      url: r.url || "",
+      snippet: r.content || "",
+      content: opts.content ? truncate(r.raw_content) : null,
+    })),
+    totalCount: null,
+  };
 }
 
-async function searchExa(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+async function searchExa(query: string, opts: SearchOptions): Promise<SearchPage> {
   const key = getKey("exa");
   const contents: Record<string, unknown> = { highlights: { maxCharacters: 300 } };
   if (opts.content) contents.text = true;
@@ -161,16 +164,19 @@ async function searchExa(query: string, opts: SearchOptions): Promise<SearchResu
     body: JSON.stringify(body),
   });
 
-  return (data.results || []).map((r: APIResponse) => ({
-    title: r.title || "",
-    url: r.url || "",
-    snippet: r.highlights?.[0] || "",
-    content: opts.content ? truncate(r.text) : null,
-    age: r.publishedDate || null,
-  }));
+  return {
+    results: (data.results || []).map((r: APIResponse) => ({
+      title: r.title || "",
+      url: r.url || "",
+      snippet: r.highlights?.[0] || "",
+      content: opts.content ? truncate(r.text) : null,
+      age: r.publishedDate || null,
+    })),
+    totalCount: null,
+  };
 }
 
-async function searchWebSearchAPI(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+async function searchWebSearchAPI(query: string, opts: SearchOptions): Promise<SearchPage> {
   const key = getKey("websearchapi");
   const body: Record<string, unknown> = { query, maxResults: opts.numResults };
   if (opts.content) body.includeContent = true;
@@ -183,15 +189,18 @@ async function searchWebSearchAPI(query: string, opts: SearchOptions): Promise<S
     body: JSON.stringify(body),
   });
 
-  return (data.organic || []).map((r: APIResponse) => ({
-    title: r.title || "",
-    url: r.url || "",
-    snippet: r.description || "",
-    content: opts.content ? truncate(r.content) : null,
-  }));
+  return {
+    results: (data.organic || []).map((r: APIResponse) => ({
+      title: r.title || "",
+      url: r.url || "",
+      snippet: r.description || "",
+      content: opts.content ? truncate(r.content) : null,
+    })),
+    totalCount: null,
+  };
 }
 
-async function searchBrave(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+async function searchBrave(query: string, opts: SearchOptions): Promise<SearchPage> {
   const key = getKey("brave");
   const params = new URLSearchParams({
     q: query,
@@ -224,7 +233,7 @@ async function searchBrave(query: string, opts: SearchOptions): Promise<SearchRe
       content: null,
     }));
 
-  return results;
+  return { results, totalCount: data.web?.total ?? null };
 }
 
 // === Codex (alpha/search — EXPERIMENTAL, text-only) ===
@@ -261,28 +270,29 @@ export function buildCodexRequestBody(query: string, opts: SearchOptions): Recor
   };
 }
 
-// Pure mapper: turns the alpha/search text `output` into a single SearchResult.
+// Pure mapper: turns the alpha/search text `output` into a SearchPage.
 // Exported for unit testing.
 export function mapCodexResult(
   query: string,
   output: string | null | undefined,
   includeContent: boolean,
-): SearchResult[] {
-  if (!output) return [];
-  return [
-    {
-      title: `Codex search: ${query}`,
-      url: "",
-      snippet: truncate(output, 500),
-      // When --content is requested, return the full answer directly so the
-      // orchestrator does not try to fetchLocalContent an empty url.
-      content: includeContent ? truncate(output, 5000) : null,
-      age: null,
-    },
-  ];
+): SearchPage {
+  if (!output) return { results: [], totalCount: null };
+  return {
+    results: [
+      {
+        title: `Codex search: ${query}`,
+        url: "",
+        snippet: truncate(output, 500),
+        content: includeContent ? truncate(output, 5000) : null,
+        age: null,
+      },
+    ],
+    totalCount: null,
+  };
 }
 
-async function searchCodex(query: string, opts: SearchOptions): Promise<SearchResult[]> {
+async function searchCodex(query: string, opts: SearchOptions): Promise<SearchPage> {
   const key = getKey("codex");
   const body = { id: crypto.randomUUID(), ...buildCodexRequestBody(query, opts) };
   const data: APIResponse = await fetchJSON("https://api.openai.com/v1/alpha/search", {
@@ -340,7 +350,7 @@ const SERPAPI_ENGINES: Record<string, SerpAPIEngineConfig> = {
 };
 
 function makeSerpAPISearch(config: SerpAPIEngineConfig): SearchFn {
-  return async (query: string, opts: SearchOptions): Promise<SearchResult[]> => {
+  return async (query: string, opts: SearchOptions): Promise<SearchPage> => {
     const key = getKey(opts.provider);
     const params = new URLSearchParams({
       engine: config.engine,
@@ -373,23 +383,26 @@ function makeSerpAPISearch(config: SerpAPIEngineConfig): SearchFn {
         (found, field) => found || data[field],
         undefined as APIResponse,
       ) || [];
-    return raw.slice(0, opts.numResults).map((r: APIResponse) => ({
-      title: r.title || "",
-      url: r.link || "",
-      snippet:
-        r.snippet ||
-        r.description ||
-        [r.price, r.rating && `${r.rating}★`].filter(Boolean).join(" · ") ||
-        "",
-      age: r.date || r.published_date || null,
-      content: null,
-    }));
+    return {
+      results: raw.slice(0, opts.numResults).map((r: APIResponse) => ({
+        title: r.title || "",
+        url: r.link || "",
+        snippet:
+          r.snippet ||
+          r.description ||
+          [r.price, r.rating && `${r.rating}★`].filter(Boolean).join(" · ") ||
+          "",
+        age: r.date || r.published_date || null,
+        content: null,
+      })),
+      totalCount: data.search_information?.total_results ?? null,
+    };
   };
 }
 
 // === Search Orchestration ===
 
-type SearchFn = (query: string, opts: SearchOptions) => Promise<SearchResult[]>;
+type SearchFn = (query: string, opts: SearchOptions) => Promise<SearchPage>;
 
 const SEARCH_FNS: Record<string, SearchFn> = {
   tavily: searchTavily,
@@ -403,10 +416,10 @@ const SEARCH_FNS: Record<string, SearchFn> = {
   amazon: makeSerpAPISearch(SERPAPI_ENGINES.amazon),
 };
 
-export async function search(query: string, opts: SearchOptions): Promise<SearchResult[]> {
-  const results = await SEARCH_FNS[opts.provider](query, opts);
+export async function search(query: string, opts: SearchOptions): Promise<SearchPage> {
+  const page = await SEARCH_FNS[opts.provider](query, opts);
   if (opts.content) {
-    const fetches = results.map((r) =>
+    const fetches = page.results.map((r) =>
       r.content == null
         ? fetchLocalContent(r.url).then((c) => {
             r.content = c;
@@ -415,5 +428,5 @@ export async function search(query: string, opts: SearchOptions): Promise<Search
     );
     await Promise.all(fetches);
   }
-  return results;
+  return page;
 }
