@@ -2,9 +2,12 @@
 // Requires Node 18+ (built-in fetch).
 
 import { Command, Option } from "commander";
+import type { Envelope, ExtractData, SearchData } from "./contracts.ts";
+import { error, success } from "./contracts.ts";
+import { MissingCredentialError, OperationalError, UsageError } from "./errors.ts";
 import { extractLocal } from "./extract.ts";
+import { type RenderFormat, renderJSON, renderTOON } from "./output.ts";
 import { PROVIDER_NAMES, search } from "./search.ts";
-import type { ExtractResult, SearchResult } from "./types.ts";
 import {
   validateCount,
   validateCountry,
@@ -13,47 +16,53 @@ import {
   validateURL,
 } from "./validation.ts";
 
-// === Output Formatters ===
-
-function printResults(
-  results: SearchResult[],
-  out: (line: string) => void = console.log,
-  err: (line: string) => void = console.error,
-): void {
-  if (results.length === 0) {
-    err("No results found.");
-    return;
-  }
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    out(`--- Result ${i + 1} ---`);
-    out(`Title: ${r.title}`);
-    out(`Link: ${r.url}`);
-    if (r.age) out(`Age: ${r.age}`);
-    out(`Snippet: ${r.snippet}`);
-    if (r.content) out(`Content:\n${r.content}`);
-    out("");
-  }
-}
-
-function printExtract(result: ExtractResult, out: (line: string) => void = console.log): void {
-  if (result.title) out(`# ${result.title}\n`);
-  out(result.content);
-}
+// === CLI dependencies (testable seam) ===
 
 export interface CLIOut {
   out: string[];
   err: string[];
 }
 
+export type SearchFn = typeof search;
+export type ExtractFn = typeof extractLocal;
+
 export interface CLIDependencies {
-  search: typeof search;
-  extract: typeof extractLocal;
+  search: SearchFn;
+  extract: ExtractFn;
+  format?: RenderFormat;
 }
 
-const defaultDeps: CLIDependencies = { search, extract: extractLocal };
+const defaultDeps: CLIDependencies = { search, extract: extractLocal, format: "toon" };
 
-// === CLI Construction (testable seam) ===
+// === Envelope runner ===
+// Renders an envelope to the selected format and maps exit code.
+
+function renderEnvelope(env: Envelope, format: RenderFormat): string {
+  if (format === "json") return renderJSON(env);
+  return renderTOON(env);
+}
+
+function exitCodeFor(env: Envelope): number {
+  if (env.ok) return 0;
+  const code = env.error.code;
+  // Usage errors → exit 2
+  if (code === "INVALID_INPUT") return 2;
+  // Everything else is operational → exit 1
+  return 1;
+}
+
+// === Commander error mapping ===
+// Converts Commander's internal errors (via exitOverride) to AXI envelopes.
+
+function mapCommanderError(e: Error & { exitCode?: number; code?: string }): Envelope {
+  // Commander throws CommanderError with .code for help/usage errors
+  if (e.code === "commander.help") {
+    return success("home", {}); // help is handled by Commander's output, this is for exit code
+  }
+  return error(null, "COMMANDER_ERROR", e.message);
+}
+
+// === CLI Construction ===
 
 export function buildProgram(
   outWriter?: (line: string) => void,
@@ -62,7 +71,9 @@ export function buildProgram(
 ): Command {
   const out = outWriter ?? console.log;
   const err = errWriter ?? console.error;
+  const format = deps.format ?? "toon";
   const { search: searchFn, extract: extractFn } = deps;
+
   const program = new Command();
 
   program
@@ -86,6 +97,41 @@ Environment variables:
       writeErr: (str) => err(str.replace(/\n$/, "")),
     });
 
+  // Wrapper: catches errors, builds envelope, renders
+  const wrap = async (
+    fn: () => Promise<Envelope>,
+    formatOverride?: RenderFormat,
+  ): Promise<void> => {
+    const renderFormat = formatOverride ?? format;
+    const envelope = await fn().catch((caught: unknown) => {
+      const e = caught as Error & { exitCode?: number; code?: string };
+      if (e instanceof UsageError) {
+        return error("search", "INVALID_INPUT", e.message, {
+          field: (e as UsageError).field,
+          invalidValue: (e as UsageError).invalidValue,
+          validValues: (e as UsageError).validValues,
+        }) as Envelope;
+      }
+      if (e instanceof MissingCredentialError) {
+        const mc = e as MissingCredentialError;
+        return error("search", "MISSING_CREDENTIAL", e.message, {
+          recovery: { command: `export ${mc.envVar}=<key>`, reason: `get key at ${mc.signupUrl}` },
+        }) as Envelope;
+      }
+      if (e instanceof OperationalError) {
+        return error("search", (e as OperationalError).code, e.message) as Envelope;
+      }
+      // Commander errors (help, usage)
+      return mapCommanderError(e);
+    });
+    out(renderEnvelope(envelope, renderFormat));
+    if (!envelope.ok) {
+      const exitErr = new Error(envelope.error.message) as Error & { exitCode: number };
+      exitErr.exitCode = exitCodeFor(envelope);
+      throw exitErr;
+    }
+  };
+
   program
     .command("search")
     .description("Search the web")
@@ -102,21 +148,35 @@ Environment variables:
     .option("--country <code>", "Two-letter country code")
     .option("--json", "Output raw JSON")
     .action(async (queryParts: string[], opts) => {
-      const rawQuery = queryParts.join(" ");
-      const query = validateQuery(rawQuery);
-      const numResults = validateCount(opts.n);
-      const freshness = validateFreshness(opts.freshness ?? null);
-      const country = validateCountry(opts.country ?? null);
+      await wrap(
+        async () => {
+          const rawQuery = queryParts.join(" ");
+          const query = validateQuery(rawQuery);
+          const numResults = validateCount(opts.n);
+          const freshness = validateFreshness(opts.freshness ?? null);
+          const country = validateCountry(opts.country ?? null);
 
-      const results = await searchFn(query, {
-        provider: opts.provider,
-        numResults,
-        content: opts.content ?? false,
-        freshness,
-        country,
-      });
-      if (opts.json) out(JSON.stringify(results, null, 2));
-      else printResults(results, out, err);
+          const results = await searchFn(query, {
+            provider: opts.provider,
+            numResults,
+            content: opts.content ?? false,
+            freshness,
+            country,
+          });
+
+          const data: SearchData = {
+            query,
+            provider: opts.provider,
+            requestedCount: numResults,
+            returnedCount: results.length,
+            totalCount: null,
+            results,
+          };
+
+          return success("search", data);
+        },
+        opts.json ? "json" : undefined,
+      );
     });
 
   program
@@ -125,10 +185,21 @@ Environment variables:
     .argument("<url>", "URL to extract")
     .option("--json", "Output raw JSON")
     .action(async (url: string, opts) => {
-      const validatedUrl = validateURL(url);
-      const result = await extractFn(validatedUrl.href);
-      if (opts.json) out(JSON.stringify(result, null, 2));
-      else printExtract(result, out);
+      await wrap(
+        async () => {
+          const validatedUrl = validateURL(url);
+          const result = await extractFn(validatedUrl.href);
+
+          const data: ExtractData = {
+            url: validatedUrl.href,
+            title: result.title,
+            content: { text: result.content, totalChars: result.content.length, truncated: false },
+          };
+
+          return success("extract", data);
+        },
+        opts.json ? "json" : undefined,
+      );
     });
 
   return program;
