@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { MissingCredentialError } from "./errors.ts";
 import type { SearchOptions } from "./search.ts";
-import { buildCodexRequestBody, mapCodexResult } from "./search.ts";
+import { buildCodexRequestBody, getKey, mapCodexResult } from "./search.ts";
 
 const baseOpts: SearchOptions = {
   provider: "codex",
@@ -72,4 +73,42 @@ test("buildCodexRequestBody maps country -> user_location (uppercased)", () => {
   const body = buildCodexRequestBody("hello", { ...baseOpts, country: "de" });
   const settings = body.settings as Record<string, { country: string }>;
   assert.deepEqual(settings.user_location, { type: "approximate", country: "DE" });
+});
+
+// === getKey: credential lookup (throws MissingCredentialError, never exits) ===
+
+const SAVED_ENV = { ...process.env };
+
+after(() => {
+  process.env = SAVED_ENV;
+});
+
+test("getKey throws MissingCredentialError when env var is absent", () => {
+  delete process.env.BRAVE_API_KEY;
+  assert.throws(
+    () => getKey("brave"),
+    MissingCredentialError,
+    "getKey should throw MissingCredentialError",
+  );
+});
+
+test("getKey MissingCredentialError contains provider, envVar, signupUrl", () => {
+  delete process.env.BRAVE_API_KEY;
+  try {
+    getKey("brave");
+    assert.fail("expected throw");
+  } catch (e) {
+    assert.ok(e instanceof MissingCredentialError);
+    const err = e as MissingCredentialError;
+    assert.equal(err.provider, "brave");
+    assert.equal(err.envVar, "BRAVE_API_KEY");
+    assert.ok(err.signupUrl.includes("brave.com"));
+  }
+});
+
+test("getKey does not call process.exit", () => {
+  delete process.env.BRAVE_API_KEY;
+  // If process.exit were called, this test would die.
+  // getKey now throws MissingCredentialError instead.
+  assert.throws(() => getKey("brave"), MissingCredentialError);
 });

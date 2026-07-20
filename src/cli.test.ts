@@ -1,15 +1,36 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Command } from "commander";
+import { MissingCredentialError } from "./errors.ts";
+import type { CLIDependencies } from "./main.ts";
 import { buildProgram, type CLIOut } from "./main.ts";
+import type { ExtractResult, SearchResult } from "./types.ts";
 
 // === Test Helpers ===
 
-function buildCapture(): { program: Command; capture: CLIOut } {
+type MockSearch = CLIDependencies["search"];
+type MockExtract = CLIDependencies["extract"];
+
+function mockSearch(results: SearchResult[] | Error): MockSearch {
+  return (_query, _opts) => {
+    if (results instanceof Error) throw results;
+    return Promise.resolve(results);
+  };
+}
+
+function mockExtract(result: ExtractResult | Error): MockExtract {
+  return (_url) => {
+    if (result instanceof Error) throw result;
+    return Promise.resolve(result);
+  };
+}
+
+function buildCapture(deps?: Partial<CLIDependencies>): { program: Command; capture: CLIOut } {
   const capture: CLIOut = { out: [], err: [] };
   const program = buildProgram(
     (line) => capture.out.push(line),
     (line) => capture.err.push(line),
+    { search: mockSearch([]), extract: mockExtract({ title: null, content: "" }), ...deps },
   );
   return { program, capture };
 }
@@ -45,16 +66,8 @@ function clearProviderEnv(): void {
   for (const key of PROVIDER_KEYS) delete process.env[key];
 }
 
-function setFakeCredential(): void {
-  // Phase 1 workaround: getKey calls process.exit(1) when key is missing,
-  // which kills the test process. Set a fake key so tests survive.
-  // Phase 2 injects the search function and removes process.exit.
-  process.env.BRAVE_API_KEY = "test-fake-key";
-}
-
 before(() => {
   clearProviderEnv();
-  setFakeCredential();
 });
 after(() => {
   process.env = SAVED_ENV;
@@ -189,10 +202,26 @@ test("AXI invalid freshness: exit 2, valid values named", async () => {
 // =============================================================================
 
 test("AXI missing credential: exit 1, structured error on stdout, empty stderr", async () => {
-  void buildCapture();
-  // Placeholder: getKey calls process.exit(1) which kills the process.
-  // Cannot test until Phase 2 removes process.exit and injects mock search.
-  assert.ok(true, "contract — tested after getKey throws instead of process.exit");
+  // Inject a mock search that throws MissingCredentialError (simulating getKey failure)
+  const { program, capture } = buildCapture({
+    search: mockSearch(
+      new MissingCredentialError(
+        "BRAVE_API_KEY not set",
+        "brave",
+        "BRAVE_API_KEY",
+        "https://brave.com",
+      ),
+    ),
+  });
+  const { code, out, err } = await run(program, ["search", "test query"], capture);
+  assert.equal(code, 1, "missing credential must exit 1");
+  // AXI target: structured error on stdout with recovery hint.
+  // Currently: error is lost (Commander with exitOverride re-throws but doesn't render).
+  assert.ok(
+    out.length > 0 || err.length > 0,
+    "error must be surfaced (currently lost between Commander exitOverride and action rejection)",
+  );
+  assert.equal(err, "", "credential error must have empty stderr");
 });
 
 // =============================================================================
@@ -203,10 +232,12 @@ test("AXI missing credential: exit 1, structured error on stdout, empty stderr",
 // =============================================================================
 
 test("AXI empty search: exit 0, structured output with query/provider/zero count", async () => {
-  void buildCapture();
-  // Placeholder: requires mocked provider returning empty to verify contract.
-  // Until Phase 2, this documents the expected contract.
-  assert.ok(true, "contract — tested with mocked provider after Phase 2");
+  // Inject mock that returns empty results
+  const { program, capture } = buildCapture();
+  const result = await run(program, ["search", "nothing matches this"], capture);
+  assert.equal(result.code, 0, "empty search must exit 0");
+  // Currently: prints "No results found." to stderr. AXI: structured on stdout.
+  assert.equal(result.err, "", "empty search must have empty stderr");
 });
 
 // =============================================================================

@@ -1,13 +1,10 @@
 // websearch - Multi-provider web search CLI
 // Requires Node 18+ (built-in fetch).
 
-import { fileURLToPath } from "node:url";
 import { Command, Option } from "commander";
 import { extractLocal } from "./extract.ts";
 import { PROVIDER_NAMES, search } from "./search.ts";
 import type { ExtractResult, SearchResult } from "./types.ts";
-
-const scriptPath = fileURLToPath(import.meta.url);
 
 // === Output Formatters ===
 
@@ -42,14 +39,23 @@ export interface CLIOut {
   err: string[];
 }
 
+export interface CLIDependencies {
+  search: typeof search;
+  extract: typeof extractLocal;
+}
+
+const defaultDeps: CLIDependencies = { search, extract: extractLocal };
+
 // === CLI Construction (testable seam) ===
 
 export function buildProgram(
   outWriter?: (line: string) => void,
   errWriter?: (line: string) => void,
+  deps: CLIDependencies = defaultDeps,
 ): Command {
   const out = outWriter ?? console.log;
   const err = errWriter ?? console.error;
+  const { search: searchFn, extract: extractFn } = deps;
   const program = new Command();
 
   program
@@ -90,7 +96,7 @@ Environment variables:
     .option("--json", "Output raw JSON")
     .action(async (queryParts: string[], opts) => {
       const query = queryParts.join(" ");
-      const results = await search(query, {
+      const results = await searchFn(query, {
         provider: opts.provider,
         numResults: parseInt(opts.n, 10),
         content: opts.content ?? false,
@@ -107,7 +113,7 @@ Environment variables:
     .argument("<url>", "URL to extract")
     .option("--json", "Output raw JSON")
     .action(async (url: string, opts) => {
-      const result = await extractLocal(url);
+      const result = await extractFn(url);
       if (opts.json) out(JSON.stringify(result, null, 2));
       else printExtract(result, out);
     });
@@ -117,7 +123,9 @@ Environment variables:
 
 // === Main entry point (production) ===
 
-const isMain = process.argv[1] === scriptPath || process.argv[1]?.endsWith("/dist/websearch.js");
+const argv1 = process.argv[1];
+const isMain =
+  argv1 != null && (argv1.endsWith("/dist/websearch.js") || argv1.endsWith("src/main.ts"));
 if (isMain) {
   buildProgram()
     .parseAsync()

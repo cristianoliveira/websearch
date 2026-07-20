@@ -1,3 +1,4 @@
+import { MissingCredentialError } from "./errors.ts";
 import { fetchLocalContent } from "./extract.ts";
 import type { SearchResult } from "./types.ts";
 import { truncate } from "./types.ts";
@@ -62,13 +63,11 @@ export interface SearchOptions {
 
 // === Utilities ===
 
-function getKey(provider: string): string {
+export function getKey(provider: string): string {
   const p = PROVIDERS[provider];
   const key = process.env[p.env];
   if (!key) {
-    console.error(`Error: ${p.env} is not set.`);
-    console.error(`Get your API key at: ${p.url}`);
-    process.exit(1);
+    throw new MissingCredentialError(`${p.env} is not set`, provider, p.env, p.url);
   }
   return key;
 }
