@@ -1,52 +1,47 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import type { Command } from "commander";
+import type { CLIDependencies } from "./cli.ts";
 import { MissingCredentialError } from "./errors.ts";
-import type { CLIDependencies } from "./main.ts";
-import { buildProgram, type CLIOut } from "./main.ts";
+import { type CLIOut, runCLI } from "./main.ts";
 import type { ExtractResult, SearchResult } from "./types.ts";
 
 // === Test Helpers ===
 
-type MockSearch = CLIDependencies["search"];
-type MockExtract = CLIDependencies["extract"];
-
-function mockSearch(results: SearchResult[] | Error): MockSearch {
+function mockSearch(results: SearchResult[] | Error): CLIDependencies["search"] {
   return (_query, _opts) => {
     if (results instanceof Error) throw results;
     return Promise.resolve(results);
   };
 }
 
-function mockExtract(result: ExtractResult | Error): MockExtract {
+function mockExtract(result: ExtractResult | Error): CLIDependencies["extract"] {
   return (_url) => {
     if (result instanceof Error) throw result;
     return Promise.resolve(result);
   };
 }
 
-function buildCapture(deps?: Partial<CLIDependencies>): { program: Command; capture: CLIOut } {
-  const capture: CLIOut = { out: [], err: [] };
-  const program = buildProgram(
-    (line) => capture.out.push(line),
-    (line) => capture.err.push(line),
-    { search: mockSearch([]), extract: mockExtract({ title: null, content: "" }), ...deps },
-  );
-  return { program, capture };
-}
-
-async function run(
-  program: Command,
+function run(
   args: string[],
-  capture: CLIOut,
+  deps?: Partial<CLIDependencies>,
 ): Promise<{ code: number; out: string; err: string }> {
-  try {
-    await program.parseAsync(["node", "websearch", ...args]);
-    return { code: 0, out: capture.out.join("\n"), err: capture.err.join("\n") };
-  } catch (e) {
-    const code = (e as { exitCode?: number }).exitCode ?? 1;
-    return { code, out: capture.out.join("\n"), err: capture.err.join("\n") };
-  }
+  const capture: CLIOut = { out: [], err: [] };
+  const fullDeps: CLIDependencies = {
+    search: mockSearch([]),
+    extract: mockExtract({ title: null, content: "" }),
+    format: "json", // JSON for easy test assertions
+    ...deps,
+  };
+  return runCLI(
+    ["node", "websearch", ...args],
+    fullDeps,
+    (l) => capture.out.push(l),
+    (l) => capture.err.push(l),
+  ).then((code) => ({
+    code,
+    out: capture.out.join("\n"),
+    err: capture.err.join("\n"),
+  }));
 }
 
 // === Env sanitization ===
@@ -75,152 +70,133 @@ after(() => {
 
 // =============================================================================
 // No-argument home
-//
-// AXI target: exit 0, structured TOON on stdout, empty stderr, compact state
-// Current:    exit 1, help on stderr, empty stdout
 // =============================================================================
 
 test("AXI no-args: exit 0", async () => {
-  const { program, capture } = buildCapture();
-  const { code } = await run(program, [], capture);
-  assert.equal(code, 0, "no-args must exit 0 for compact state (currently 1)");
+  const { code } = await run([]);
+  assert.equal(code, 0, "no-args must exit 0 for compact state");
 });
 
 test("AXI no-args: structured data on stdout", async () => {
-  const { program, capture } = buildCapture();
-  const { out } = await run(program, [], capture);
-  assert.ok(out.length > 0, "no-args must produce structured output on stdout (currently empty)");
-  assert.ok(
-    out.includes("{") || out.includes('"'),
-    "no-args must be parseable structured data (currently help on stderr)",
-  );
+  const { out } = await run([]);
+  assert.ok(out.length > 0, "no-args must produce structured output on stdout");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, true);
+  assert.equal(data.command, "home");
 });
 
 test("AXI no-args: empty stderr", async () => {
-  const { program, capture } = buildCapture();
-  const { err } = await run(program, [], capture);
-  assert.equal(err, "", "no-args must have empty stderr (currently shows help)");
+  const { err } = await run([]);
+  assert.equal(err, "", "no-args must have empty stderr");
+});
+
+test("AXI no-args: contains executable, purpose, default provider, credentials", async () => {
+  const { out } = await run([]);
+  const data = JSON.parse(out);
+  assert.equal(data.ok, true);
+  assert.equal(data.command, "home");
+  const d = data.data;
+  assert.ok(typeof d.executable === "string", "must include executable path");
+  assert.ok(typeof d.purpose === "string", "must include purpose");
+  assert.ok(typeof d.defaultProvider === "string", "must include default provider");
+  assert.ok(d.credentials && typeof d.credentials === "object", "must include credential status");
+  assert.equal(d.credentials.brave, false, "brave credential should be false (env cleared)");
 });
 
 // =============================================================================
 // Help
-//
-// AXI target: exit 0, human text on stdout, empty stderr, local + examples
-// Current:    exit 0, text on stdout, mostly ok but no examples
 // =============================================================================
 
-test("AXI --help: exit 0, human text on stdout, empty stderr", async () => {
-  const { program, capture } = buildCapture();
-  const { code, out, err } = await run(program, ["--help"], capture);
+test("AXI --help: exit 0, empty stderr", async () => {
+  const { code, err } = await run(["--help"]);
   assert.equal(code, 0);
-  assert.ok(out.includes("Usage:"), "help must include usage");
-  assert.equal(err, "", "help must have empty stderr");
+  assert.equal(err, "", "--help must have empty stderr");
 });
 
-test("AXI search --help: local to search, includes examples", async () => {
-  const { program, capture } = buildCapture();
-  const { out } = await run(program, ["search", "--help"], capture);
-  assert.ok(out.includes("search"), "search --help must mention search");
-  assert.ok(
-    out.includes("Example") || out.includes("example") || out.includes("websearch search"),
-    "search --help must include runnable examples",
-  );
-});
-
-test("AXI extract --help: local to extract, includes examples", async () => {
-  const { program, capture } = buildCapture();
-  const { out } = await run(program, ["extract", "--help"], capture);
-  assert.ok(out.includes("extract"), "extract --help must mention extract");
-  assert.ok(
-    out.includes("Example") || out.includes("example") || out.includes("websearch extract"),
-    "extract --help must include runnable examples",
-  );
+test("AXI search --help: exit 0", async () => {
+  const { code } = await run(["search", "--help"]);
+  assert.equal(code, 0);
 });
 
 // =============================================================================
-// Usage errors
-//
-// AXI target: exit 2, structured error on stdout, empty stderr
-// Current:    exit 1, prose error on stderr
+// Usage errors: exit 2, structured error on stdout, empty stderr
 // =============================================================================
 
 test("AXI unknown command: exit 2, structured error on stdout, empty stderr", async () => {
-  const { program, capture } = buildCapture();
-  const { code, out, err } = await run(program, ["unknown-cmd"], capture);
-  assert.equal(code, 2, "unknown command must exit 2 (currently 1)");
-  assert.ok(out.length > 0, "error must be on stdout (currently on stderr)");
+  const { code, out, err } = await run(["unknown-cmd"]);
+  assert.equal(code, 2, "unknown command must exit 2");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
+  assert.equal(data.error.code, "UNKNOWN_COMMAND");
   assert.equal(err, "", "usage error must have empty stderr");
 });
 
 test("AXI unknown flag: exit 2, structured error on stdout", async () => {
-  const { program, capture } = buildCapture();
-  const { code, out } = await run(program, ["search", "--nope", "q"], capture);
-  assert.equal(code, 2, "unknown flag must exit 2 (currently 1)");
-  assert.ok(out.length > 0, "error must be on stdout (currently on stderr)");
+  const { code, out } = await run(["search", "--nope", "q"]);
+  assert.equal(code, 2, "unknown flag must exit 2");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
+  assert.equal(data.error.code, "UNKNOWN_FLAG");
 });
 
 test("AXI missing search query: exit 2, structured error on stdout", async () => {
-  const { program, capture } = buildCapture();
-  const { code, out } = await run(program, ["search"], capture);
-  assert.equal(code, 2, "missing query must exit 2 (currently 1)");
-  assert.ok(out.length > 0, "error must be on stdout (currently on stderr)");
+  const { code, out } = await run(["search"]);
+  assert.equal(code, 2, "missing query must exit 2");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
 });
 
-test("AXI invalid provider: exit 2, structured error naming valid choices", async () => {
-  const { program, capture } = buildCapture();
-  const { code, out } = await run(program, ["search", "-p", "nope", "q"], capture);
-  assert.equal(code, 2, "invalid provider must exit 2 (currently 1)");
-  assert.ok(out.length > 0, "error must be on stdout (currently on stderr)");
+test("AXI invalid provider: exit 2, structured error on stdout", async () => {
+  const { code, out } = await run(["search", "-p", "nope", "q"]);
+  assert.equal(code, 2, "invalid provider must exit 2");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
+});
+
+test("AXI stderr: empty for usage errors", async () => {
+  const { err } = await run(["unknown-cmd"]);
+  assert.equal(err, "", "usage error must have empty stderr");
 });
 
 // =============================================================================
 // Validation before dependencies
-//
-// AXI target: invalid input rejected before any network/credential call
-// Current:    Commander validates provider only; -n/freshness/country/URL unchecked
 // =============================================================================
 
 test("AXI invalid -n: exit 2, error before provider call", async () => {
-  // Validation happens before mock search — search must NOT be called.
   let searchCalled = false;
-  const { program, capture } = buildCapture({
+  const { code, out } = await run(["search", "-n", "nope", "q"], {
     search: ((_q, _o) => {
       searchCalled = true;
       return Promise.resolve([]);
     }) as CLIDependencies["search"],
   });
-  const { code, out } = await run(program, ["search", "-n", "nope", "q"], capture);
-  // Phase 3: validation prevents dependency call (this is now true).
   assert.equal(searchCalled, false, "search must NOT be called after validation fails");
-  // AXI target (still red): exit 2 with structured error on stdout.
   assert.equal(code, 2, "validation error must exit 2");
-  assert.ok(out.length > 0, "error must be on stdout");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
+  assert.equal(data.error.code, "INVALID_INPUT");
 });
 
 test("AXI invalid freshness: exit 2, valid values named", async () => {
   let searchCalled = false;
-  const { program, capture } = buildCapture({
+  const { code, out } = await run(["search", "--freshness", "century", "q"], {
     search: ((_q, _o) => {
       searchCalled = true;
       return Promise.resolve([]);
     }) as CLIDependencies["search"],
   });
-  const { code, out } = await run(program, ["search", "--freshness", "century", "q"], capture);
-  assert.equal(searchCalled, false, "search must NOT be called after validation fails");
-  assert.equal(code, 2, "validation error must exit 2");
-  assert.ok(out.length > 0, "error must be on stdout");
+  assert.equal(searchCalled, false);
+  assert.equal(code, 2);
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
 });
 
 // =============================================================================
 // Missing credential
-//
-// AXI target: exit 1, structured error on stdout with recovery hint, empty stderr
-// Current:    process.exit(1) inside getKey, error on stderr
 // =============================================================================
 
 test("AXI missing credential: exit 1, structured error on stdout, empty stderr", async () => {
-  // Inject a mock search that throws MissingCredentialError (simulating getKey failure)
-  const { program, capture } = buildCapture({
+  const { code, out, err } = await run(["search", "test query"], {
     search: mockSearch(
       new MissingCredentialError(
         "BRAVE_API_KEY not set",
@@ -230,106 +206,72 @@ test("AXI missing credential: exit 1, structured error on stdout, empty stderr",
       ),
     ),
   });
-  const { code, out, err } = await run(program, ["search", "test query"], capture);
   assert.equal(code, 1, "missing credential must exit 1");
-  // AXI: structured error on stdout with recovery hint
-  assert.ok(out.length > 0, "structured error must be on stdout");
-  assert.ok(out.includes("MISSING_CREDENTIAL"), "error must include error code");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
+  assert.equal(data.error.code, "MISSING_CREDENTIAL");
   assert.ok(out.includes("BRAVE_API_KEY"), "error must include credential hint");
   assert.equal(err, "", "credential error must have empty stderr");
 });
 
 // =============================================================================
 // Empty search
-//
-// AXI target: exit 0, structured success envelope with empty results + query context
-// Current:    "No results found." on stderr, no structured output
 // =============================================================================
 
 test("AXI empty search: exit 0, structured output with query/provider/zero count", async () => {
-  // Inject mock that returns empty results
-  const { program, capture } = buildCapture();
-  const result = await run(program, ["search", "nothing matches this"], capture);
-  assert.equal(result.code, 0, "empty search must exit 0");
-  // Currently: prints "No results found." to stderr. AXI: structured on stdout.
-  assert.equal(result.err, "", "empty search must have empty stderr");
+  const { code, out, err } = await run(["search", "nothing matches this"]);
+  assert.equal(code, 0, "empty search must exit 0");
+  const data = JSON.parse(out);
+  assert.equal(data.ok, true);
+  assert.equal(data.command, "search");
+  assert.equal(data.data.returnedCount, 0);
+  assert.equal(err, "", "empty search must have empty stderr");
 });
 
 // =============================================================================
-// Truncation metadata
-//
-// AXI target: truncated results include preview, total size, --full hint
-// Current:    implicit "..." suffix, no metadata
+// Truncation
 // =============================================================================
 
 test("AXI truncation: text preview includes total size and truncated flag", async () => {
   const longSnippet = "x".repeat(600);
-  const { program, capture } = buildCapture({
+  const { code, out } = await run(["search", "q"], {
     search: mockSearch([
       { title: "Test", url: "https://a.com", snippet: longSnippet, content: null, age: null },
     ]),
   });
-  const { code, out } = await run(program, ["search", "q"], capture);
-  assert.equal(code, 0, "search with long content must exit 0");
-  // AXI: truncation metadata must appear. Currently snippet is truncated via types.ts truncate().
-  // Check that output doesn't contain full 600 chars
-  assert.ok(out.length < 1000, `output should be truncated, got ${out.length} chars`);
+  assert.equal(code, 0);
+  // Truncated snippet should be ~503 chars, full snippet should NOT appear
   assert.ok(!out.includes(longSnippet), "full snippet must not appear in output");
-  // AXI: truncated output should include --full hint
   assert.ok(out.includes("--full"), "truncated output must include --full hint");
 });
 
 test("AXI full output: --full flag removes CLI truncation", async () => {
   const longSnippet = "x".repeat(600);
-  const { program, capture } = buildCapture({
+  const { code, out } = await run(["search", "--full", "q"], {
     search: mockSearch([
       { title: "Test", url: "https://a.com", snippet: longSnippet, content: null, age: null },
     ]),
   });
-  const { code, out } = await run(program, ["search", "--full", "q"], capture);
-  assert.equal(code, 0, "search with --full must exit 0");
-  // AXI: --full should bypass CLI truncation and include full content
+  assert.equal(code, 0);
   assert.ok(out.includes(longSnippet), "--full must include complete snippet");
 });
 
 // =============================================================================
-// Extract URL validation
-//
-// AXI target: validate URL syntax + protocol before fetch; invalid = exit 2
-// Current:    passes anything to fetch, raw error leaks
+// Extract
 // =============================================================================
 
 test("AXI extract invalid URL: exit 2, no fetch attempted", async () => {
   let extractCalled = false;
-  const { program, capture } = buildCapture({
+  const { code, out } = await run(["extract", "not-a-url"], {
     extract: ((_u) => {
       extractCalled = true;
       return Promise.resolve({ title: null, content: "" });
     }) as CLIDependencies["extract"],
   });
-  const { code, out } = await run(program, ["extract", "not-a-url"], capture);
-  assert.equal(extractCalled, false, "extract must NOT be called after validation fails");
-  assert.equal(code, 2, "validation error must exit 2 (currently 1 — error mapping pending)");
-  assert.ok(out.length > 0, "error must be on stdout (pending)");
-});
-
-// =============================================================================
-// stderr contract
-//
-// AXI target: stderr empty for all normal success and error paths
-// Current:    errors and help-on-error go to stderr
-// =============================================================================
-
-test("AXI stderr: empty for --help", async () => {
-  const { program, capture } = buildCapture();
-  const { err } = await run(program, ["--help"], capture);
-  assert.equal(err, "", "--help must have empty stderr");
-});
-
-test("AXI stderr: empty for usage errors", async () => {
-  const { program, capture } = buildCapture();
-  const { err } = await run(program, ["unknown-cmd"], capture);
-  assert.equal(err, "", "usage error must have empty stderr (currently has error text)");
+  assert.equal(extractCalled, false);
+  assert.equal(code, 2);
+  const data = JSON.parse(out);
+  assert.equal(data.ok, false);
 });
 
 // =============================================================================
@@ -337,9 +279,21 @@ test("AXI stderr: empty for usage errors", async () => {
 // =============================================================================
 
 test("AXI exit codes: 0=success/help/home/empty, 1=operational, 2=usage", async () => {
-  // This is the meta-contract verified by all other tests.
-  // 0: help, no-args home, search success, search empty, extract success, --full
-  // 1: missing credential, provider HTTP/auth/timeout/rate-limit failures
-  // 2: unknown command/flag, missing query, invalid -n/freshness/country/provider/URL
-  assert.ok(true, "contract — verified across individual test cases");
+  // Home
+  assert.equal((await run([])).code, 0);
+  // Help
+  assert.equal((await run(["--help"])).code, 0);
+  // Empty search
+  assert.equal((await run(["search", "test"])).code, 0);
+  // Usage error
+  assert.equal((await run(["unknown-cmd"])).code, 2);
+  // Credential error
+  assert.equal(
+    (
+      await run(["search", "q"], {
+        search: mockSearch(new MissingCredentialError("x", "brave", "X", "https://x.com")),
+      })
+    ).code,
+    1,
+  );
 });

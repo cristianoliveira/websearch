@@ -1,48 +1,19 @@
-// websearch - Multi-provider web search CLI
+// websearch - Multi-provider web search CLI (composition root)
 // Requires Node 18+ (built-in fetch).
 
-import { Command, Option } from "commander";
-import {
-  type Envelope,
-  type ExtractData,
-  error,
-  type Hint,
-  type SearchData,
-  success,
-  textPreview,
-} from "./contracts.ts";
+import { buildProgram, type CLIDependencies } from "./cli.ts";
+import { type Envelope, error, type HomeData, success } from "./contracts.ts";
 import { MissingCredentialError, OperationalError, UsageError } from "./errors.ts";
 import { extractLocal } from "./extract.ts";
 import { type RenderFormat, renderJSON, renderTOON } from "./output.ts";
 import { PROVIDER_NAMES, search } from "./search.ts";
-import {
-  validateCount,
-  validateCountry,
-  validateFreshness,
-  validateQuery,
-  validateURL,
-} from "./validation.ts";
 
-// === CLI dependencies (testable seam) ===
+// === Output helpers ===
 
 export interface CLIOut {
   out: string[];
   err: string[];
 }
-
-export type SearchFn = typeof search;
-export type ExtractFn = typeof extractLocal;
-
-export interface CLIDependencies {
-  search: SearchFn;
-  extract: ExtractFn;
-  format?: RenderFormat;
-}
-
-const defaultDeps: CLIDependencies = { search, extract: extractLocal, format: "toon" };
-
-// === Envelope runner ===
-// Renders an envelope to the selected format and maps exit code.
 
 function renderEnvelope(env: Envelope, format: RenderFormat): string {
   if (format === "json") return renderJSON(env);
@@ -53,186 +24,155 @@ function exitCodeFor(env: Envelope): number {
   if (env.ok) return 0;
   const code = env.error.code;
   // Usage errors → exit 2
-  if (code === "INVALID_INPUT") return 2;
+  if (
+    code === "INVALID_INPUT" ||
+    code === "UNKNOWN_COMMAND" ||
+    code === "UNKNOWN_FLAG" ||
+    code === "MISSING_ARGUMENT"
+  )
+    return 2;
   // Everything else is operational → exit 1
   return 1;
 }
 
-// === Commander error mapping ===
-// Converts Commander's internal errors (via exitOverride) to AXI envelopes.
+// === Error translation ===
 
-function mapCommanderError(e: Error & { exitCode?: number; code?: string }): Envelope {
-  // Commander throws CommanderError with .code for help/usage errors
-  if (e.code === "commander.help") {
-    return success("home", {}); // help is handled by Commander's output, this is for exit code
+function translateError(e: unknown, command: string): Envelope {
+  if (e instanceof UsageError) {
+    return error(command as Envelope["command"], "INVALID_INPUT", e.message, {
+      field: e.field,
+      invalidValue: e.invalidValue,
+      validValues: e.validValues,
+    });
   }
-  return error(null, "COMMANDER_ERROR", e.message);
+  if (e instanceof MissingCredentialError) {
+    return error(command as Envelope["command"], "MISSING_CREDENTIAL", e.message, {
+      recovery: { command: `export ${e.envVar}=<key>`, reason: `get key at ${e.signupUrl}` },
+    });
+  }
+  if (e instanceof OperationalError) {
+    return error(command as Envelope["command"], e.code, e.message);
+  }
+  const msg = e instanceof Error ? e.message : String(e);
+  return error(command as Envelope["command"], "UNEXPECTED_ERROR", msg);
 }
 
-// === CLI Construction ===
+// === Home state builder ===
 
-export function buildProgram(
-  outWriter?: (line: string) => void,
-  errWriter?: (line: string) => void,
-  deps: CLIDependencies = defaultDeps,
-): Command {
-  const out = outWriter ?? console.log;
-  const err = errWriter ?? console.error;
-  const format = deps.format ?? "toon";
-  const { search: searchFn, extract: extractFn } = deps;
+function buildHome(): Envelope {
+  const defaultProvider = process.env.WEBSEARCH_DEFAULT_PROVIDER || "brave";
+  const credentials: Record<string, boolean> = {};
+  for (const p of PROVIDER_NAMES) {
+    const envVar = {
+      tavily: "TAVILY_API_KEY",
+      exa: "EXA_API_KEY",
+      websearchapi: "WEBSEARCHAPI_KEY",
+      brave: "BRAVE_API_KEY",
+      google: "SERPAPI_KEY",
+      scholar: "SERPAPI_KEY",
+      youtube: "SERPAPI_KEY",
+      amazon: "SERPAPI_KEY",
+      codex: "CODEX_ACCESS_TOKEN",
+    }[p];
+    credentials[p] = envVar ? !!process.env[envVar] : false;
+  }
 
-  const program = new Command();
-
-  program
-    .name("websearch")
-    .description("Multi-provider web search CLI")
-    .addHelpText(
-      "after",
-      `
-Environment variables:
-  TAVILY_API_KEY              Tavily (https://app.tavily.com)
-  EXA_API_KEY                 Exa (https://dashboard.exa.ai)
-  WEBSEARCHAPI_KEY            WebSearchAPI.ai (https://websearchapi.ai)
-  BRAVE_API_KEY               Brave Search (https://api-dashboard.search.brave.com)
-  SERPAPI_KEY                 Google, Scholar, YouTube, Amazon (https://serpapi.com/manage-api-key)
-  CODEX_ACCESS_TOKEN          Codex search - EXPERIMENTAL (alpha/search, text-only)
-  WEBSEARCH_DEFAULT_PROVIDER  Override default provider for search`,
-    )
-    .exitOverride()
-    .configureOutput({
-      writeOut: (str) => out(str.replace(/\n$/, "")),
-      writeErr: (str) => err(str.replace(/\n$/, "")),
-    });
-
-  // Wrapper: catches errors, builds envelope, renders
-  const wrap = async (
-    fn: () => Promise<Envelope>,
-    formatOverride?: RenderFormat,
-  ): Promise<void> => {
-    const renderFormat = formatOverride ?? format;
-    const envelope = await fn().catch((caught: unknown) => {
-      const e = caught as Error & { exitCode?: number; code?: string };
-      if (e instanceof UsageError) {
-        return error("search", "INVALID_INPUT", e.message, {
-          field: (e as UsageError).field,
-          invalidValue: (e as UsageError).invalidValue,
-          validValues: (e as UsageError).validValues,
-        }) as Envelope;
-      }
-      if (e instanceof MissingCredentialError) {
-        const mc = e as MissingCredentialError;
-        return error("search", "MISSING_CREDENTIAL", e.message, {
-          recovery: { command: `export ${mc.envVar}=<key>`, reason: `get key at ${mc.signupUrl}` },
-        }) as Envelope;
-      }
-      if (e instanceof OperationalError) {
-        return error("search", (e as OperationalError).code, e.message) as Envelope;
-      }
-      // Commander errors (help, usage)
-      return mapCommanderError(e);
-    });
-    out(renderEnvelope(envelope, renderFormat));
-    if (!envelope.ok) {
-      const exitErr = new Error(envelope.error.message) as Error & { exitCode: number };
-      exitErr.exitCode = exitCodeFor(envelope);
-      throw exitErr;
-    }
+  const data: HomeData = {
+    executable: "~/websearch",
+    purpose: "Multi-provider web search and content extraction CLI",
+    defaultProvider,
+    credentials,
   };
 
-  program
-    .command("search")
-    .description("Search the web")
-    .argument("<query...>", "Search query")
-    .addOption(
-      new Option("-p, --provider <name>", "Provider to use")
-        .choices(PROVIDER_NAMES)
-        .default("brave")
-        .env("WEBSEARCH_DEFAULT_PROVIDER"),
-    )
-    .option("-n <num>", "Number of results", "5")
-    .option("--content", "Include page content")
-    .option("--full", "Disable content truncation")
-    .option("--freshness <period>", "Filter: day, week, month, year")
-    .option("--country <code>", "Two-letter country code")
-    .option("--json", "Output raw JSON")
-    .action(async (queryParts: string[], opts) => {
-      await wrap(
-        async () => {
-          const rawQuery = queryParts.join(" ");
-          const query = validateQuery(rawQuery);
-          const numResults = validateCount(opts.n);
-          const freshness = validateFreshness(opts.freshness ?? null);
-          const country = validateCountry(opts.country ?? null);
+  return success("home", data, [
+    { command: `websearch search "your query"`, reason: "search with default provider" },
+  ]);
+}
 
-          const results = await searchFn(query, {
-            provider: opts.provider,
-            numResults,
-            content: opts.content ?? false,
-            freshness,
-            country,
-          });
+// === Commander error mapping ===
 
-          // Apply truncation: default 500 char snippet preview, --full bypasses
-          const snippetMax = opts.full ? Infinity : 500;
-          const contentMax = opts.full ? Infinity : 5000;
-          const processed = results.map((r) => ({
-            ...r,
-            snippet: textPreview(r.snippet, snippetMax).text,
-            content: r.content ? textPreview(r.content, contentMax).text : null,
-          }));
+function mapCommanderError(e: Error & { exitCode?: number; code?: string }): Envelope {
+  if (e.code === "commander.helpDisplayed" || e.code === "commander.help") {
+    return success("home", {});
+  }
+  if (e.code === "commander.unknownCommand" || e.code === "commander.excessArguments") {
+    return error(null, "UNKNOWN_COMMAND", e.message);
+  }
+  if (e.code === "commander.unknownOption") {
+    return error(null, "UNKNOWN_FLAG", e.message);
+  }
+  if (e.code === "commander.missingArgument") {
+    return error(null, "MISSING_ARGUMENT", e.message);
+  }
+  if (e.code === "commander.invalidArgument") {
+    return error(null, "INVALID_INPUT", e.message);
+  }
+  return error(null, "USAGE_ERROR", e.message);
+}
 
-          const data: SearchData = {
-            query,
-            provider: opts.provider,
-            requestedCount: numResults,
-            returnedCount: processed.length,
-            totalCount: null,
-            results: processed,
-          };
+// === Main runner ===
 
-          const hints: Hint[] = [];
-          const hasTruncated = results.some(
-            (r) => r.snippet.length > snippetMax || (r.content && r.content.length > contentMax),
-          );
-          if (hasTruncated && !opts.full) {
-            hints.push({
-              command: `websearch search ${query} --full`,
-              reason: "some results were truncated — use --full for complete content",
-            });
-          }
+export async function runCLI(
+  args: string[],
+  deps: CLIDependencies,
+  out: (line: string) => void,
+  _err: (line: string) => void,
+): Promise<number> {
+  const program = buildProgram(deps, (env) => {
+    out(renderEnvelope(env, format));
+  });
 
-          return success("search", data, hints);
-        },
-        opts.json ? "json" : undefined,
-      );
-    });
+  // Silence Commander's output — we handle all rendering ourselves
+  program.configureOutput({
+    writeOut: () => {},
+    writeErr: () => {},
+  });
 
-  program
-    .command("extract")
-    .description("Extract content from a URL as markdown (local, no API credits)")
-    .argument("<url>", "URL to extract")
-    .option("--json", "Output raw JSON")
-    .option("--full", "Disable content truncation")
-    .action(async (url: string, opts) => {
-      await wrap(
-        async () => {
-          const validatedUrl = validateURL(url);
-          const result = await extractFn(validatedUrl.href);
-          const contentMax = opts.full ? Infinity : 5000;
+  // Determine format from args (check for --json)
+  const hasJson = args.includes("--json");
+  const format: RenderFormat = hasJson ? "json" : (deps.format ?? "toon");
 
-          const data: ExtractData = {
-            url: validatedUrl.href,
-            title: result.title,
-            content: textPreview(result.content, contentMax),
-          };
+  // No-args: home
+  const userArgs = args.slice(2); // skip "node" and "websearch"
+  if (userArgs.length === 0 || (userArgs.length === 1 && userArgs[0] === "--json")) {
+    const home = buildHome();
+    out(renderEnvelope(home, format));
+    return 0;
+  }
 
-          return success("extract", data);
-        },
-        opts.json ? "json" : undefined,
-      );
-    });
+  // Check for --help — let Commander handle it
+  if (userArgs.includes("--help") || userArgs.includes("-h")) {
+    // Commander prints help; we just need exit 0
+    try {
+      await program.parseAsync(args);
+      return 0;
+    } catch (e) {
+      const ce = e as { exitCode?: number; code?: string };
+      if (ce.code === "commander.helpDisplayed" || ce.code === "commander.help") return 0;
+      // Commander error during help — render as structured
+      const envelope = mapCommanderError(ce as Error & { exitCode?: number; code?: string });
+      out(renderEnvelope(envelope, format));
+      return exitCodeFor(envelope);
+    }
+  }
 
-  return program;
+  try {
+    await program.parseAsync(args);
+    return 0;
+  } catch (e) {
+    // Commander errors (usage, help)
+    const ce = e as { exitCode?: number; code?: string };
+    if (ce.code?.startsWith("commander.")) {
+      const envelope = mapCommanderError(ce as Error & { exitCode?: number; code?: string });
+      out(renderEnvelope(envelope, format));
+      return exitCodeFor(envelope);
+    }
+    // Action errors (from our typed errors)
+    const cmd = userArgs[0] || "search";
+    const envelope = translateError(e, cmd);
+    out(renderEnvelope(envelope, format));
+    return exitCodeFor(envelope);
+  }
 }
 
 // === Main entry point (production) ===
@@ -241,8 +181,11 @@ const argv1 = process.argv[1];
 const isMain =
   argv1 != null && (argv1.endsWith("/dist/websearch.js") || argv1.endsWith("src/main.ts"));
 if (isMain) {
-  buildProgram()
-    .parseAsync()
+  const deps: CLIDependencies = { search, extract: extractLocal, format: "toon" };
+  runCLI(process.argv, deps, console.log, console.error)
+    .then((code) => {
+      if (code !== 0) process.exit(code);
+    })
     .catch((e: Error) => {
       console.error(`Error: ${e.message}`);
       process.exit(1);
