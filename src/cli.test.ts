@@ -115,9 +115,10 @@ test("AXI --help: exit 0, human text on stdout, empty stderr", async () => {
   assert.equal(err, "", "--help must have empty stderr");
 });
 
-test("AXI search --help: exit 0", async () => {
-  const { code } = await run(["search", "--help"]);
+test("AXI search --help: exit 0, includes examples", async () => {
+  const { code, out } = await run(["search", "--help"]);
   assert.equal(code, 0);
+  assert.ok(out.includes("Examples:"), "search --help must include examples section");
 });
 
 // =============================================================================

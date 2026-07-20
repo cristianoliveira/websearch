@@ -118,46 +118,40 @@ export async function runCLI(
   out: (line: string) => void,
   _err: (line: string) => void,
 ): Promise<number> {
-  const program = buildProgram(deps, (env) => {
-    out(renderEnvelope(env, format));
-  });
-
-  // Silence Commander's output by default — we handle rendering
-  program.configureOutput({
-    writeOut: () => {},
-    writeErr: () => {},
-  });
-
   // Determine format from args (check for --json)
   const hasJson = args.includes("--json");
   const format: RenderFormat = hasJson ? "json" : (deps.format ?? "toon");
+  const userArgs = args.slice(2);
 
-  // No-args: home
-  const userArgs = args.slice(2); // skip "node" and "websearch"
+  // No-args: home — no Commander needed
   if (userArgs.length === 0 || (userArgs.length === 1 && userArgs[0] === "--json")) {
     const home = buildHome();
     out(renderEnvelope(home, format));
     return 0;
   }
 
-  // Check for --help — restore Commander's output for human help
+  // --help: let Commander write human help directly
   if (userArgs.includes("--help") || userArgs.includes("-h")) {
-    program.configureOutput({
-      writeOut: (str: string) => out(str.replace(/\n$/, "")),
-      writeErr: (str: string) => _err(str.replace(/\n$/, "")),
-    });
+    const program = buildProgram(deps, () => {}, out, _err);
     try {
       await program.parseAsync(args);
       return 0;
     } catch (e) {
       const ce = e as { exitCode?: number; code?: string };
       if (ce.code === "commander.helpDisplayed" || ce.code === "commander.help") return 0;
-      // Commander error during help — render as structured
-      const envelope = mapCommanderError(ce as Error & { exitCode?: number; code?: string });
-      out(renderEnvelope(envelope, format));
-      return exitCodeFor(envelope);
+      return 1;
     }
   }
+
+  // Normal path: silence Commander, handle all output via envelopes
+  const program = buildProgram(
+    deps,
+    (env) => {
+      out(renderEnvelope(env, format));
+    },
+    () => {},
+    () => {},
+  );
 
   try {
     await program.parseAsync(args);

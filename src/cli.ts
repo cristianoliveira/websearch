@@ -28,10 +28,18 @@ export interface CLIDependencies {
 
 // === CLI Construction ===
 
-export function buildProgram(deps: CLIDependencies, onResult: (env: Envelope) => void): Command {
+export function buildProgram(
+  deps: CLIDependencies,
+  onResult: (env: Envelope) => void,
+  outWriter: (line: string) => void,
+  errWriter: (line: string) => void,
+): Command {
   const { search: searchFn, extract: extractFn } = deps;
 
-  const program = new Command();
+  const program = new Command().exitOverride().configureOutput({
+    writeOut: (str: string) => outWriter(str.replace(/\n$/, "")),
+    writeErr: (str: string) => errWriter(str.replace(/\n$/, "")),
+  });
 
   program
     .name("websearch")
@@ -77,6 +85,14 @@ Environment variables:
     .option("--freshness <period>", "Filter: day, week, month, year")
     .option("--country <code>", "Two-letter country code")
     .option("--json", "Output raw JSON")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  websearch search "rust async patterns"
+  websearch search "ai news" --freshness week --content
+  websearch search "topic" -p tavily -n 10 --json`,
+    )
     .action(async (queryParts: string[], opts) => {
       await handle(async () => {
         const rawQuery = queryParts.join(" ");
@@ -131,6 +147,14 @@ Environment variables:
     .argument("<url>", "URL to extract")
     .option("--json", "Output raw JSON")
     .option("--full", "Disable content truncation")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  websearch extract "https://example.com"
+  websearch extract "https://docs.rs/tokio" --full
+  websearch extract "https://en.wikipedia.org/wiki/Rust" --json`,
+    )
     .action(async (url: string, opts) => {
       await handle(async () => {
         const validatedUrl = validateURL(url);
