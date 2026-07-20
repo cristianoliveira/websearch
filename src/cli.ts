@@ -56,6 +56,23 @@ Environment variables:
   CODEX_ACCESS_TOKEN          Codex search - EXPERIMENTAL (alpha/search, text-only)
   WEBSEARCH_DEFAULT_PROVIDER  Override default provider for search`,
     )
+    .addHelpText(
+      "after",
+      `
+Output format:
+  TOON is the default structured output on stdout (use --json for JSON).
+  Errors are structured on stdout; stderr is reserved for diagnostics.
+
+Exit codes:
+  0  Success, empty results, no-args home, help
+  1  Operational failure (missing credential, provider error, timeout)
+  2  Usage error (invalid input, unknown command/flag)
+
+Examples:
+  websearch                              # Show configured providers
+  websearch search "rust async"          # Search with default provider
+  websearch extract "https://example.com" # Extract page content as markdown`,
+    )
     .exitOverride();
 
   // Action wrapper: validates, executes, calls onResult, throws for exit code

@@ -111,7 +111,8 @@ test("AXI --help: exit 0, human text on stdout, empty stderr", async () => {
   const { code, out, err } = await run(["--help"]);
   assert.equal(code, 0);
   assert.ok(out.includes("Usage:"), "help must include usage text");
-  assert.ok(out.length > 50, "help output should be substantial");
+  assert.ok(out.includes("Exit codes:"), "root help must include exit code summary");
+  assert.ok(out.includes("Examples:"), "root help must include examples");
   assert.equal(err, "", "--help must have empty stderr");
 });
 
