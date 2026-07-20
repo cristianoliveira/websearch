@@ -181,17 +181,34 @@ test("AXI invalid provider: exit 2, structured error naming valid choices", asyn
 // =============================================================================
 
 test("AXI invalid -n: exit 2, error before provider call", async () => {
-  void buildCapture();
-  // Placeholder: currently reaches provider (slow network).
-  // Cannot test without injected mock search (Phase 2).
-  assert.ok(true, "contract — tested after validation layer prevents network access");
+  // Validation happens before mock search — search must NOT be called.
+  let searchCalled = false;
+  const { program, capture } = buildCapture({
+    search: ((_q, _o) => {
+      searchCalled = true;
+      return Promise.resolve([]);
+    }) as CLIDependencies["search"],
+  });
+  const { code, out } = await run(program, ["search", "-n", "nope", "q"], capture);
+  // Phase 3: validation prevents dependency call (this is now true).
+  assert.equal(searchCalled, false, "search must NOT be called after validation fails");
+  // AXI target (still red): exit 2 with structured error on stdout.
+  assert.equal(code, 2, "validation error must exit 2 (currently 1 — error mapping pending)");
+  assert.ok(out.length > 0, "error must be on stdout (pending structured rendering)");
 });
 
 test("AXI invalid freshness: exit 2, valid values named", async () => {
-  void buildCapture();
-  // Placeholder: currently reaches provider (slow network).
-  // Cannot test without injected mock search (Phase 2).
-  assert.ok(true, "contract — tested after validation layer prevents network access");
+  let searchCalled = false;
+  const { program, capture } = buildCapture({
+    search: ((_q, _o) => {
+      searchCalled = true;
+      return Promise.resolve([]);
+    }) as CLIDependencies["search"],
+  });
+  const { code, out } = await run(program, ["search", "--freshness", "century", "q"], capture);
+  assert.equal(searchCalled, false, "search must NOT be called after validation fails");
+  assert.equal(code, 2, "validation error must exit 2 (currently 1)");
+  assert.ok(out.length > 0, "error must be on stdout (pending)");
 });
 
 // =============================================================================
@@ -264,12 +281,17 @@ test("AXI full output: --full flag removes CLI truncation", async () => {
 // =============================================================================
 
 test("AXI extract invalid URL: exit 2, no fetch attempted", async () => {
-  void buildCapture();
-  // Currently reaches fetch and throws raw error.
-  // With exitOverride, the error from extract action bubbles as unhandled rejection?
-  // Commander handles action rejections with .catch and prints the error.
-  // This test documents the target.
-  assert.ok(true, "contract — tested after URL validation is added");
+  let extractCalled = false;
+  const { program, capture } = buildCapture({
+    extract: ((_u) => {
+      extractCalled = true;
+      return Promise.resolve({ title: null, content: "" });
+    }) as CLIDependencies["extract"],
+  });
+  const { code, out } = await run(program, ["extract", "not-a-url"], capture);
+  assert.equal(extractCalled, false, "extract must NOT be called after validation fails");
+  assert.equal(code, 2, "validation error must exit 2 (currently 1 — error mapping pending)");
+  assert.ok(out.length > 0, "error must be on stdout (pending)");
 });
 
 // =============================================================================

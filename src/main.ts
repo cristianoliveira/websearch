@@ -5,6 +5,13 @@ import { Command, Option } from "commander";
 import { extractLocal } from "./extract.ts";
 import { PROVIDER_NAMES, search } from "./search.ts";
 import type { ExtractResult, SearchResult } from "./types.ts";
+import {
+  validateCount,
+  validateCountry,
+  validateFreshness,
+  validateQuery,
+  validateURL,
+} from "./validation.ts";
 
 // === Output Formatters ===
 
@@ -95,13 +102,18 @@ Environment variables:
     .option("--country <code>", "Two-letter country code")
     .option("--json", "Output raw JSON")
     .action(async (queryParts: string[], opts) => {
-      const query = queryParts.join(" ");
+      const rawQuery = queryParts.join(" ");
+      const query = validateQuery(rawQuery);
+      const numResults = validateCount(opts.n);
+      const freshness = validateFreshness(opts.freshness ?? null);
+      const country = validateCountry(opts.country ?? null);
+
       const results = await searchFn(query, {
         provider: opts.provider,
-        numResults: parseInt(opts.n, 10),
+        numResults,
         content: opts.content ?? false,
-        freshness: opts.freshness ?? null,
-        country: opts.country ?? null,
+        freshness,
+        country,
       });
       if (opts.json) out(JSON.stringify(results, null, 2));
       else printResults(results, out, err);
@@ -113,7 +125,8 @@ Environment variables:
     .argument("<url>", "URL to extract")
     .option("--json", "Output raw JSON")
     .action(async (url: string, opts) => {
-      const result = await extractFn(url);
+      const validatedUrl = validateURL(url);
+      const result = await extractFn(validatedUrl.href);
       if (opts.json) out(JSON.stringify(result, null, 2));
       else printExtract(result, out);
     });
