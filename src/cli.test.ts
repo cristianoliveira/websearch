@@ -193,8 +193,8 @@ test("AXI invalid -n: exit 2, error before provider call", async () => {
   // Phase 3: validation prevents dependency call (this is now true).
   assert.equal(searchCalled, false, "search must NOT be called after validation fails");
   // AXI target (still red): exit 2 with structured error on stdout.
-  assert.equal(code, 2, "validation error must exit 2 (currently 1 — error mapping pending)");
-  assert.ok(out.length > 0, "error must be on stdout (pending structured rendering)");
+  assert.equal(code, 2, "validation error must exit 2");
+  assert.ok(out.length > 0, "error must be on stdout");
 });
 
 test("AXI invalid freshness: exit 2, valid values named", async () => {
@@ -207,8 +207,8 @@ test("AXI invalid freshness: exit 2, valid values named", async () => {
   });
   const { code, out } = await run(program, ["search", "--freshness", "century", "q"], capture);
   assert.equal(searchCalled, false, "search must NOT be called after validation fails");
-  assert.equal(code, 2, "validation error must exit 2 (currently 1)");
-  assert.ok(out.length > 0, "error must be on stdout (pending)");
+  assert.equal(code, 2, "validation error must exit 2");
+  assert.ok(out.length > 0, "error must be on stdout");
 });
 
 // =============================================================================
@@ -232,12 +232,10 @@ test("AXI missing credential: exit 1, structured error on stdout, empty stderr",
   });
   const { code, out, err } = await run(program, ["search", "test query"], capture);
   assert.equal(code, 1, "missing credential must exit 1");
-  // AXI target: structured error on stdout with recovery hint.
-  // Currently: error is lost (Commander with exitOverride re-throws but doesn't render).
-  assert.ok(
-    out.length > 0 || err.length > 0,
-    "error must be surfaced (currently lost between Commander exitOverride and action rejection)",
-  );
+  // AXI: structured error on stdout with recovery hint
+  assert.ok(out.length > 0, "structured error must be on stdout");
+  assert.ok(out.includes("MISSING_CREDENTIAL"), "error must include error code");
+  assert.ok(out.includes("BRAVE_API_KEY"), "error must include credential hint");
   assert.equal(err, "", "credential error must have empty stderr");
 });
 
@@ -265,12 +263,33 @@ test("AXI empty search: exit 0, structured output with query/provider/zero count
 // =============================================================================
 
 test("AXI truncation: text preview includes total size and truncated flag", async () => {
-  // Placeholder: requires mocked provider returning large content.
-  assert.ok(true, "contract — tested with mocked provider after Phase 2");
+  const longSnippet = "x".repeat(600);
+  const { program, capture } = buildCapture({
+    search: mockSearch([
+      { title: "Test", url: "https://a.com", snippet: longSnippet, content: null, age: null },
+    ]),
+  });
+  const { code, out } = await run(program, ["search", "q"], capture);
+  assert.equal(code, 0, "search with long content must exit 0");
+  // AXI: truncation metadata must appear. Currently snippet is truncated via types.ts truncate().
+  // Check that output doesn't contain full 600 chars
+  assert.ok(out.length < 1000, `output should be truncated, got ${out.length} chars`);
+  assert.ok(!out.includes(longSnippet), "full snippet must not appear in output");
+  // AXI: truncated output should include --full hint
+  assert.ok(out.includes("--full"), "truncated output must include --full hint");
 });
 
 test("AXI full output: --full flag removes CLI truncation", async () => {
-  assert.ok(true, "contract — tested after --full flag is implemented");
+  const longSnippet = "x".repeat(600);
+  const { program, capture } = buildCapture({
+    search: mockSearch([
+      { title: "Test", url: "https://a.com", snippet: longSnippet, content: null, age: null },
+    ]),
+  });
+  const { code, out } = await run(program, ["search", "--full", "q"], capture);
+  assert.equal(code, 0, "search with --full must exit 0");
+  // AXI: --full should bypass CLI truncation and include full content
+  assert.ok(out.includes(longSnippet), "--full must include complete snippet");
 });
 
 // =============================================================================

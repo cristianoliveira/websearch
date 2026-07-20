@@ -2,8 +2,15 @@
 // Requires Node 18+ (built-in fetch).
 
 import { Command, Option } from "commander";
-import type { Envelope, ExtractData, SearchData } from "./contracts.ts";
-import { error, success } from "./contracts.ts";
+import {
+  type Envelope,
+  type ExtractData,
+  error,
+  type Hint,
+  type SearchData,
+  success,
+  textPreview,
+} from "./contracts.ts";
 import { MissingCredentialError, OperationalError, UsageError } from "./errors.ts";
 import { extractLocal } from "./extract.ts";
 import { type RenderFormat, renderJSON, renderTOON } from "./output.ts";
@@ -144,6 +151,7 @@ Environment variables:
     )
     .option("-n <num>", "Number of results", "5")
     .option("--content", "Include page content")
+    .option("--full", "Disable content truncation")
     .option("--freshness <period>", "Filter: day, week, month, year")
     .option("--country <code>", "Two-letter country code")
     .option("--json", "Output raw JSON")
@@ -164,16 +172,36 @@ Environment variables:
             country,
           });
 
+          // Apply truncation: default 500 char snippet preview, --full bypasses
+          const snippetMax = opts.full ? Infinity : 500;
+          const contentMax = opts.full ? Infinity : 5000;
+          const processed = results.map((r) => ({
+            ...r,
+            snippet: textPreview(r.snippet, snippetMax).text,
+            content: r.content ? textPreview(r.content, contentMax).text : null,
+          }));
+
           const data: SearchData = {
             query,
             provider: opts.provider,
             requestedCount: numResults,
-            returnedCount: results.length,
+            returnedCount: processed.length,
             totalCount: null,
-            results,
+            results: processed,
           };
 
-          return success("search", data);
+          const hints: Hint[] = [];
+          const hasTruncated = results.some(
+            (r) => r.snippet.length > snippetMax || (r.content && r.content.length > contentMax),
+          );
+          if (hasTruncated && !opts.full) {
+            hints.push({
+              command: `websearch search ${query} --full`,
+              reason: "some results were truncated — use --full for complete content",
+            });
+          }
+
+          return success("search", data, hints);
         },
         opts.json ? "json" : undefined,
       );
@@ -184,16 +212,18 @@ Environment variables:
     .description("Extract content from a URL as markdown (local, no API credits)")
     .argument("<url>", "URL to extract")
     .option("--json", "Output raw JSON")
+    .option("--full", "Disable content truncation")
     .action(async (url: string, opts) => {
       await wrap(
         async () => {
           const validatedUrl = validateURL(url);
           const result = await extractFn(validatedUrl.href);
+          const contentMax = opts.full ? Infinity : 5000;
 
           const data: ExtractData = {
             url: validatedUrl.href,
             title: result.title,
-            content: { text: result.content, totalChars: result.content.length, truncated: false },
+            content: textPreview(result.content, contentMax),
           };
 
           return success("extract", data);
