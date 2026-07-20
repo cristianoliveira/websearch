@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- AXI-compliant CLI contract: TOON as default structured stdout, JSON via `--json`
+- Structured error output on stdout (exit codes: 0/1/2, stderr reserved for diagnostics)
+- No-argument home view with credential readiness and configured providers
+- Input validation before any dependency call (count, freshness, country, URL)
+- `--full` flag to disable content truncation
+- Truncation metadata with `--full` hint on truncated output
+- Secret redaction in error messages (bearer tokens, API keys, auth headers)
+- Typed domain errors (UsageError, MissingCredentialError, OperationalError)
+- `--country` flag validation (ISO 3166-1 alpha-2)
+
+### Changed
+
+- Errors from providers now translate to domain error codes (AUTHENTICATION_FAILED, RATE_LIMITED, etc.)
+- `getKey` throws MissingCredentialError instead of calling `process.exit(1)`
+- Empty search returns structured envelope instead of stderr message
+
 ## [2.1.0] - 2026-05-27
 
 ### Added

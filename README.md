@@ -1,12 +1,48 @@
 # websearch
 
-Multi-provider web search and content extraction CLI.
+Multi-provider web search and content extraction CLI — **AXI-compliant** for autonomous agents.
+
+Defaults to TOON (Token-Oriented Object Notation) on stdout. Use `--json` for JSON compatibility.
+Errors are structured on stdout, stderr is reserved for diagnostics.
 
 ## Install
 
 ```bash
 npm install -g @juanibiapina/websearch
 ```
+
+## Quick start
+
+```bash
+# Discovery — shows configured providers and credential status
+websearch
+
+# Search (TOON output)
+websearch search "rust async patterns"
+
+# Search with JSON output
+websearch search "rust async" --json
+
+# Search with full (untruncated) content
+websearch search "topic" --content --full
+
+# Extract page content
+websearch extract "https://example.com"
+```
+
+## Output Formats
+
+- **TOON** (default) — compact, token-efficient, structured stdout
+- **JSON** (`--json`) — same semantic value, for interoperability
+- Errors are always structured on stdout; diagnostics on stderr only
+
+## Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success, empty results, no-args home, help |
+| 1 | Operational failure (missing credential, provider error, timeout) |
+| 2 | Usage error (invalid input, unknown command/flag) |
 
 ## Usage
 
@@ -15,12 +51,28 @@ websearch search "query"                       # Search (default: Brave)
 websearch search "query" -p brave              # Specific provider
 websearch search "query" -n 10                 # More results (default: 5)
 websearch search "query" --content             # Include page content
+websearch search "query" --full                # Disable content truncation
 websearch search "query" --freshness week      # Filter: day, week, month, year
-websearch search "query" -p codex              # EXPERIMENTAL: AI-synthesized text answer (alpha/search)
+websearch search "query" --country de          # ISO 3166-1 alpha-2 country code
+websearch search "query" --json                # JSON output
+websearch search "query" -p codex              # EXPERIMENTAL: AI-synthesized text answer
 websearch extract "https://example.com"        # Extract page content as markdown
+websearch extract "https://example.com" --full # Full content (no truncation)
 ```
 
-All commands support `--json` for raw JSON output.
+Structured error example:
+```
+$ websearch search -n nope q
+ok: false
+command: null
+error:
+  code: INVALID_INPUT
+  message: count must be a positive integer (1-20)
+  field: count
+  invalidValue: nope
+  validValues[1]:
+    1-20
+```
 
 ## Providers
 
