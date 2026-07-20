@@ -1,6 +1,6 @@
 {
   "name": "@juanibiapina/websearch",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Multi-provider web search and content extraction CLI",
   "author": "Juan Ibiapina",
   "license": "MIT",

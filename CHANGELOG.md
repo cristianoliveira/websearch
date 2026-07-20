@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-07-20
 
 ### Added
 
@@ -18,12 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Secret redaction in error messages (bearer tokens, API keys, auth headers)
 - Typed domain errors (UsageError, MissingCredentialError, OperationalError)
 - `--country` flag validation (ISO 3166-1 alpha-2)
+- Provider `totalCount` support (Brave, SerpAPI-based providers)
+- Root `--help` with exit code summary, output format docs, and examples
+- Subcommand `--help` with 3 runnable examples each
+- `SearchPage` type wrapping results + totalCount
 
 ### Changed
 
-- Errors from providers now translate to domain error codes (AUTHENTICATION_FAILED, RATE_LIMITED, etc.)
+- Default output format changed from human-readable prose to TOON (breaking)
+- Errors now structured on stdout instead of prose on stderr (breaking)
+- Exit codes: 0=success, 1=operational, 2=usage (was always 1; breaking)
+- No-argument invocation returns compact state instead of help (breaking)
+- Errors from providers now translate to domain error codes
 - `getKey` throws MissingCredentialError instead of calling `process.exit(1)`
 - Empty search returns structured envelope instead of stderr message
+- Search providers return `SearchPage` instead of bare `SearchResult[]`
 
 ## [2.1.0] - 2026-05-27
 
